@@ -3,14 +3,15 @@ import time
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
-import httpx
 import uvicorn
 from dbos import DBOS, DBOSConfig, SetWorkflowID
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 
-import dev_log
-from dev_log import log
+from app import logging_setup
+from app.integrations.nvb import fetch_jobs_page
+from app.integrations.nvb.schema import JobSearchResponse
+from app.logging_setup import log
 
 # Welcome to DBOS!
 # This example shows you how to use DBOS to build applications
@@ -26,8 +27,8 @@ config: DBOSConfig = {
 DBOS(config=config)
 
 # Mirror DBOS/uvicorn logs into logs/dev.log alongside our own dev logger.
-dev_log.attach("dbos", "uvicorn.error")
-dev_log.section("app start")
+logging_setup.attach("dbos", "uvicorn.error")
+logging_setup.section("app start")
 
 steps_event = "steps_event"
 
@@ -290,23 +291,8 @@ def deny_comm(workflow_id: str):
 
 
 # ---- Job search (Nationale Vacaturebank) ----
-
-NVB_URL = "https://api.nationalevacaturebank.nl/api/jobs/v3/sites/nationalevacaturebank.nl/jobs"
-NVB_HEADERS = {
-    "Accept": "application/json",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Referer": "https://www.nationalevacaturebank.nl/",
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"
-    ),
-    "sec-ch-ua": '"Google Chrome";v="149", "Chromium";v="149", "Not)A;Brand";v="24"',
-    "sec-ch-ua-mobile": "?0",
-    "sec-ch-ua-platform": '"Windows"',
-    "Sec-Fetch-Dest": "empty",
-    "Sec-Fetch-Mode": "cors",
-    "Sec-Fetch-Site": "same-origin",
-}
+# The HTTP call and the response models live in app/integrations/nvb/; this
+# module only wires them into durable workflow steps.
 
 
 # A step is the unit DBOS checkpoints: if the workflow is interrupted after this
@@ -314,54 +300,42 @@ NVB_HEADERS = {
 # are retried with backoff before the step is considered failed.
 @DBOS.step(retries_allowed=True, max_attempts=3, interval_seconds=2)
 def fetch_jobs(query: str, page: int = 1, limit: int = 10, sort: str = "date") -> dict:
-    params = {"page": page, "limit": limit, "sort": sort, "query": query}
-    log.info("GET %s params=%s", NVB_URL, params)
-
-    with httpx.Client(timeout=30.0, follow_redirects=True) as client:
-        response = client.get(NVB_URL, params=params, headers=NVB_HEADERS)
-
-    log.info(
-        "response status=%s elapsed=%.2fs bytes=%s",
-        response.status_code,
-        response.elapsed.total_seconds(),
-        len(response.content),
-    )
-    response.raise_for_status()
-    return response.json()
+    return fetch_jobs_page(query, page=page, limit=limit, sort=sort)
 
 
 @DBOS.step()
 def log_jobs(payload: dict) -> int:
-    # The API is HAL-shaped: the list lives under _embedded.jobs.
-    jobs = payload.get("_embedded", {}).get("jobs", [])
+    # Parse the raw dict into typed models; see app/integrations/nvb/schema.py.
+    page = JobSearchResponse.model_validate(payload)
     log.info(
         "page %s/%s - %s job(s) on this page, %s total",
-        payload.get("page"),
-        payload.get("pages"),
-        len(jobs),
-        payload.get("total"),
+        page.page,
+        page.pages,
+        len(page.jobs),
+        page.total,
     )
 
-    if not jobs:
+    if not page.jobs:
         log.warning("no jobs in response; top-level keys=%s", list(payload.keys()))
 
-    for index, job in enumerate(jobs, start=1):
-        location = job.get("workLocation") or {}
+    for index, job in enumerate(page.jobs, start=1):
         log.info(
-            "  %2d. %s | %s | %s | posted %s | %s",
+            "  %2d. %s | %s | %s | %s | posted %s | salary %s",
             index,
-            job.get("title"),
-            (job.get("company") or {}).get("name"),
-            location.get("city"),
-            (job.get("startDate") or "")[:10],
-            job.get("_links", {}).get("self", {}).get("href"),
+            job.title,
+            job.company_name,
+            job.city,
+            job.career_level,
+            job.start_date.date() if job.start_date else None,
+            job.salary_range or "n/a",
         )
-    return len(jobs)
+        log.debug("      %s", job.url)
+    return len(page.jobs)
 
 
 @DBOS.workflow()
 def job_search_workflow(query: str, page: int = 1, limit: int = 10) -> int:
-    dev_log.section(f"job search: {query}")
+    logging_setup.section(f"job search: {query}")
     payload = fetch_jobs(query, page=page, limit=limit)
     count = log_jobs(payload)
     log.info("job search finished for %r: %s job(s) logged", query, count)
