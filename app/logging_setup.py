@@ -2,7 +2,7 @@
 
 Usage anywhere in the project:
 
-    from dev_log import log
+    from app.logging_setup import log
     log.info("checkpoint: %s", value)
 
 Everything lands in logs/dev.log so you can follow one clean stream instead of
@@ -13,7 +13,9 @@ import logging
 import os
 from logging.handlers import RotatingFileHandler
 
-LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+# __file__ is app/logging_setup.py, so the project root is one level up.
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+LOG_DIR = os.path.join(PROJECT_ROOT, "logs")
 LOG_FILE = os.path.join(LOG_DIR, "dev.log")
 
 _FORMAT = "%(asctime)s %(levelname)-7s [%(name)s] %(filename)s:%(lineno)d | %(message)s"
