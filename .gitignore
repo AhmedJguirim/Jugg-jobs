@@ -3,6 +3,8 @@
 
 # env files (can opt-in for committing if needed)
 .env*
+# ...but the key template carries no secrets and must be tracked.
+!.env.example
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
