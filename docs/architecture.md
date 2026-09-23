@@ -18,6 +18,7 @@ never the reverse.
   main.py                    entrypoint: FastAPI routes + DBOS workflow wiring
       |
       v
+  app/services/              flows: order multiple repository/client calls
   app/repositories/          all SQL for a table; returns ORM objects
   app/integrations/          outbound HTTP clients + their response models
       |
@@ -51,9 +52,11 @@ Supporting trees, outside the runtime path:
 | `app/db/models/` | ORM models; `__init__` is the registry Alembic reads |
 | `app/schemas/` | DTOs for companies and vacancies + normalisation |
 | `app/repositories/` | CRUD; raises domain errors, never commits |
+| `app/services/` | Flow layer: multi-step operations (paginating job ingest) |
 | `app/integrations/nvb/` | NVB client (`client.py`), models (`schema.py`), mapper (`mapper.py`) |
 | `app/logging_setup.py` | File logger for development (`logs/dev.log`) |
 | `scripts/ingest_companies.py` | Loads `companies.json` into `companies` |
+| `scripts/ingest_jobs.py` | Ingests every result page for one or more queries |
 | `tools/cmdlog.py` | Append-only shell-command audit log with risk levels |
 
 ## Data model
@@ -146,6 +149,22 @@ without persisting.
 Steps are the checkpoint unit: a crash after `fetch_jobs` resumes without
 re-issuing the HTTP call.
 
+**Full-query ingest** (every page of one search):
+
+```
+POST /jobs/ingest  -> job_ingest_workflow   (durable; one step per page)
+scripts/ingest_jobs.py -> ingest_query()    (same flow, no DBOS)
+                            |- fetch page 1 -> learn how many pages exist
+                            |- for each page: map -> upsert jobs
+                            |                         + company + location
+                            -> IngestStats
+```
+
+The page count comes from the first response rather than being guessed, each
+page commits in its own transaction, and a page that fails is recorded in
+`failed_pages` while the walk continues - one bad page must not discard the
+rest of the crawl. Re-running updates in place.
+
 ## Conventions
 
 - **Transactions belong to the caller.** Repositories `flush()` but never
@@ -188,8 +207,12 @@ heuristics assign. See ADR-0005.
 - No HTTP API for companies or vacancies yet - CRUD is reachable only from
   Python. The repositories are deliberately framework-free so routes are a thin
   addition.
-- Vacancies are only ever ingested one search page at a time; there is no
-  scheduled crawl and no pagination past the first page.
+- Ingest is triggered by hand (CLI or endpoint); there is no scheduled crawl.
+- The board offers **no employer filter** - `filters=company:x` and similar are
+  silently ignored, returning the unfiltered set. Only full-text search is
+  available, so "vacancies at employer X" is not directly expressible; a text
+  search for a brand returns vacancies that *mention* it, mostly posted by
+  agencies.
 - `companies.type`/`website` fill in only for employers that appear in a
   fetched vacancy; the 2901 seed rows stay empty until then.
 - `province` holds cities and is not normalised.

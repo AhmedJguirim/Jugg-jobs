@@ -13,6 +13,7 @@ from app.db.session import session_scope
 from app.integrations.nvb import fetch_jobs_page, to_job_creates
 from app.integrations.nvb.schema import JobSearchResponse
 from app.repositories import job as job_repo
+from app.services.job_ingest import DEFAULT_LIMIT, IngestStats
 from app.logging_setup import log
 
 # Welcome to DBOS!
@@ -357,6 +358,71 @@ def job_search_workflow(query: str, page: int = 1, limit: int = 10, store: bool 
     result = store_jobs(payload) if store else {"created": 0, "updated": 0}
     log.info("job search finished for %r: %s job(s) logged, %s", query, count, result)
     return {"logged": count, **result}
+
+
+# ---- Full-query ingest (all pages) ----
+# The paging logic lives in app/services/job_ingest.py; here each page fetch and
+# each page store is a DBOS step, so an interrupted crawl resumes at the page it
+# reached instead of re-fetching everything.
+
+
+@DBOS.step()
+def page_count(payload: dict) -> int:
+    """How many pages the first response says exist."""
+    return int(payload.get("pages") or 1)
+
+
+@DBOS.workflow()
+def job_ingest_workflow(
+    query: str,
+    limit: int = DEFAULT_LIMIT,
+    max_pages: int | None = None,
+) -> dict:
+    """Ingest every result page for one query, with its companies and locations."""
+    logging_setup.section(f"ingest: {query}")
+    stats = IngestStats(query=query)
+
+    payload = fetch_jobs(query, page=1, limit=limit)
+    total_pages = page_count(payload)
+    stats.total_reported = payload.get("total")
+    stats.pages_available = total_pages
+
+    last_page = min(total_pages, max_pages) if max_pages else total_pages
+    for page in range(1, last_page + 1):
+        if page > 1:
+            payload = fetch_jobs(query, page=page, limit=limit)
+        logged = log_jobs(payload)
+        result = store_jobs(payload)
+        stats.pages_fetched += 1
+        stats.jobs_seen += logged
+        stats.created += result["created"]
+        stats.updated += result["updated"]
+
+    log.info("ingest workflow done - %s", stats.summary())
+    return stats.as_dict()
+
+
+@app.post("/jobs/ingest")
+def ingest_jobs(body: dict | None = None):
+    """Start a durable ingest of every page for a query."""
+    body = body or {}
+    query = body.get("query", "Odido")
+    limit = int(body.get("limit", DEFAULT_LIMIT))
+    max_pages = body.get("max_pages")
+    handle = DBOS.start_workflow(
+        job_ingest_workflow, query, limit, int(max_pages) if max_pages else None
+    )
+    return {"workflow_id": handle.workflow_id}
+
+
+@app.get("/jobs/ingest/{workflow_id}")
+def ingest_result(workflow_id: str):
+    """Poll a running ingest; returns its stats once finished."""
+    handle = DBOS.retrieve_workflow(workflow_id)
+    status = handle.get_status()
+    if status.status != "SUCCESS":
+        return {"status": status.status}
+    return {"status": status.status, "stats": handle.get_result()}
 
 
 @app.post("/jobs/search")

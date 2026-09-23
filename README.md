@@ -36,7 +36,25 @@ See [`docs/architecture.md`](docs/architecture.md) for the design, and
 
    Idempotent: re-running updates existing rows instead of duplicating them.
 
-5. **Run**
+5. **Ingest vacancies**
+
+   ```shell
+   python scripts/ingest_jobs.py "Odido"                  # every result page
+   python scripts/ingest_jobs.py "Odido" --limit 25 --max-pages 2
+   python scripts/ingest_jobs.py "python developer" "data engineer"
+   ```
+
+   Or durably, through the running app:
+
+   ```shell
+   curl -X POST http://localhost:8000/jobs/ingest      -H 'Content-Type: application/json' -d '{"query":"Odido"}'
+   curl http://localhost:8000/jobs/ingest/<workflow_id>
+   ```
+
+   Safe to re-run: vacancies are keyed on `(source, external_id)`, so a second
+   run updates rather than duplicates.
+
+6. **Run**
 
    ```shell
    python main.py
@@ -87,11 +105,12 @@ main.py                     FastAPI routes + DBOS workflows
 app/config.py               settings from env/.env
 app/db/                     engine, session, models, base
 app/repositories/           CRUD; all SQL lives here
+app/services/               flows (paginating job ingest)
 app/schemas/                pydantic DTOs (public contract)
 app/integrations/nvb/       Nationale Vacaturebank client + response models
 app/logging_setup.py        file logger for development
 alembic/                    migrations
-scripts/                    operational one-shots (ingest)
+scripts/                    operational one-shots (company + job ingest)
 tools/cmdlog.py             command audit log
 tests/unit/                 fast tests (PostgreSQL)
 tests/test_app.py           end-to-end browser tests
