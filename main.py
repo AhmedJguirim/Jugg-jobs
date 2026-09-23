@@ -9,8 +9,10 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 
 from app import logging_setup
-from app.integrations.nvb import fetch_jobs_page
+from app.db.session import session_scope
+from app.integrations.nvb import fetch_jobs_page, to_job_creates
 from app.integrations.nvb.schema import JobSearchResponse
+from app.repositories import job as job_repo
 from app.logging_setup import log
 
 # Welcome to DBOS!
@@ -333,13 +335,28 @@ def log_jobs(payload: dict) -> int:
     return len(page.jobs)
 
 
+@DBOS.step()
+def store_jobs(payload: dict) -> dict:
+    """Persist a page of vacancies. Idempotent on (source, external_id)."""
+    created = updated = 0
+    with session_scope() as session:
+        for job_payload in to_job_creates(payload):
+            _, was_created = job_repo.upsert(session, job_payload)
+            created += was_created
+            updated += not was_created
+
+    log.info("stored vacancies: %s created, %s updated", created, updated)
+    return {"created": created, "updated": updated}
+
+
 @DBOS.workflow()
-def job_search_workflow(query: str, page: int = 1, limit: int = 10) -> int:
+def job_search_workflow(query: str, page: int = 1, limit: int = 10, store: bool = True) -> dict:
     logging_setup.section(f"job search: {query}")
     payload = fetch_jobs(query, page=page, limit=limit)
     count = log_jobs(payload)
-    log.info("job search finished for %r: %s job(s) logged", query, count)
-    return count
+    result = store_jobs(payload) if store else {"created": 0, "updated": 0}
+    log.info("job search finished for %r: %s job(s) logged, %s", query, count, result)
+    return {"logged": count, **result}
 
 
 @app.post("/jobs/search")
@@ -348,7 +365,8 @@ def search_jobs(body: dict | None = None):
     query = body.get("query", "100 Grams")
     page = int(body.get("page", 1))
     limit = int(body.get("limit", 10))
-    handle = DBOS.start_workflow(job_search_workflow, query, page, limit)
+    store = bool(body.get("store", True))
+    handle = DBOS.start_workflow(job_search_workflow, query, page, limit, store)
     return {"workflow_id": handle.workflow_id}
 
 

@@ -1,3 +1,3 @@
-from app.repositories import company
+from app.repositories import company, job
 
-__all__ = ["company"]
+__all__ = ["company", "job"]

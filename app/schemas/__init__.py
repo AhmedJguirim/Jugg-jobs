@@ -4,5 +4,26 @@ from app.schemas.company import (
     CompanyRead,
     CompanyUpdate,
 )
+from app.schemas.job import (
+    DcoTitleBase,
+    JobCreate,
+    JobPage,
+    JobRead,
+    JobUpdate,
+    LocationBase,
+    VocabularyTerms,
+)
 
-__all__ = ["CompanyCreate", "CompanyPage", "CompanyRead", "CompanyUpdate"]
+__all__ = [
+    "CompanyCreate",
+    "CompanyPage",
+    "CompanyRead",
+    "CompanyUpdate",
+    "DcoTitleBase",
+    "JobCreate",
+    "JobPage",
+    "JobRead",
+    "JobUpdate",
+    "LocationBase",
+    "VocabularyTerms",
+]
