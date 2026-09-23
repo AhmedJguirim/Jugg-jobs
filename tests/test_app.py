@@ -1,6 +1,10 @@
 import re
 
+import pytest
 from playwright.sync_api import Page, expect
+
+# Whole module is end-to-end: deselect with `-m "not e2e"`.
+pytestmark = pytest.mark.e2e
 
 
 def test_homepage_loads(app_server: str, page: Page):
