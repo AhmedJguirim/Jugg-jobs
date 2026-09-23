@@ -49,9 +49,9 @@ Supporting trees, outside the runtime path:
 | `app/db/base.py` | `Base`, naming convention, `TimestampMixin` |
 | `app/db/session.py` | Cached engine/sessionmaker, `session_scope()` |
 | `app/db/models/` | ORM models; `__init__` is the registry Alembic reads |
-| `app/schemas/` | `CompanyCreate/Update/Read/Page` DTOs + normalisation |
+| `app/schemas/` | DTOs for companies and vacancies + normalisation |
 | `app/repositories/` | CRUD; raises domain errors, never commits |
-| `app/integrations/nvb/` | NVB HTTP client (`client.py`) and models (`schema.py`) |
+| `app/integrations/nvb/` | NVB client (`client.py`), models (`schema.py`), mapper (`mapper.py`) |
 | `app/logging_setup.py` | File logger for development (`logs/dev.log`) |
 | `scripts/ingest_companies.py` | Loads `companies.json` into `companies` |
 | `tools/cmdlog.py` | Append-only shell-command audit log with risk levels |
@@ -83,6 +83,41 @@ Known data-quality issue: `province` actually holds **cities** in the seed data
 ("Amsterdam", "Eindhoven", "Delft" - 166 distinct values). The column name was
 specified; the contents were not cleaned. See ADR-0002.
 
+
+### Vacancies
+
+Twelve tables in total. What gets its own table was decided by sampling 200
+live vacancies rather than by uniform rule - see ADR-0006.
+
+```
+  companies <---- jobs ----> locations
+                   |
+                   |-- job_categories ---------> categories
+                   |-- job_industries ---------> industries
+                   |-- job_education_levels ---> education_levels
+                   |-- job_contract_types -----> contract_types
+                   |-- job_dco_titles           (ranked, scored)
+```
+
+- **`jobs`** - the vacancy. Everything 1:1 lives here as columns (salary band,
+  working hours, apply details, contact person, street/postcode), plus
+  `job_titles` as an array of free-text keywords and `raw` as the untouched
+  source payload.
+- **`locations`** - places, deduplicated. Cities repeat heavily across
+  vacancies, so city/province filtering becomes an indexed join.
+- **Four vocabularies** - small closed sets (16, 30, 5 and 5 distinct values).
+  Each association row carries `is_primary`, recording the value the API
+  reports in its singular field without duplicating it into a column.
+- **`job_dco_titles`** - the classifier's ranked candidate occupation titles,
+  each with a `similarity` score and a `generic_title` bucket. Rank 0 is
+  mirrored onto `jobs.dco_title` so the common filter needs no join.
+
+`(source, external_id)` is the natural key, which makes re-ingesting a search
+result idempotent. Vacancies also fill in `companies.slug`, `type` and
+`website` - the columns the seed file left empty.
+
+The vacancy logo is deliberately not modelled or stored.
+
 ## Request and data flows
 
 **Company ingest** (operational, manual):
@@ -100,8 +135,13 @@ Idempotent: re-running updates in place instead of duplicating.
 POST /jobs/search -> job_search_workflow
                        |- fetch_jobs        (step, retried 3x, checkpointed)
                        |- log_jobs          (step, parses via JobSearchResponse)
-                     -> logs/dev.log
+                       |- store_jobs        (step, maps + upserts into 8 tables)
+                     -> logs/dev.log + PostgreSQL
 ```
+
+Idempotent on `(source, external_id)`: re-running the same search updates the
+existing vacancies instead of duplicating them. Pass `{"store": false}` to log
+without persisting.
 
 Steps are the checkpoint unit: a crash after `fetch_jobs` resumes without
 re-issuing the HTTP call.
@@ -145,9 +185,12 @@ heuristics assign. See ADR-0005.
 
 ## Known gaps
 
-- No HTTP API for companies yet - CRUD is reachable only from Python. The
-  repository is deliberately framework-free so routes are a thin addition.
-- `vacancies` are fetched and logged but never persisted; no `jobs` table yet.
-- `type`/`website` are empty for every company until a source supplies them.
+- No HTTP API for companies or vacancies yet - CRUD is reachable only from
+  Python. The repositories are deliberately framework-free so routes are a thin
+  addition.
+- Vacancies are only ever ingested one search page at a time; there is no
+  scheduled crawl and no pagination past the first page.
+- `companies.type`/`website` fill in only for employers that appear in a
+  fetched vacancy; the 2901 seed rows stay empty until then.
 - `province` holds cities and is not normalised.
 - No authentication, and no CI pipeline.
