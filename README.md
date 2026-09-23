@@ -47,7 +47,9 @@ See [`docs/architecture.md`](docs/architecture.md) for the design, and
    Or durably, through the running app:
 
    ```shell
-   curl -X POST http://localhost:8000/jobs/ingest      -H 'Content-Type: application/json' -d '{"query":"Odido"}'
+   curl -X POST http://localhost:8000/jobs/ingest \
+     -H 'Content-Type: application/json' \
+     -d '{"query":"Odido"}'
    curl http://localhost:8000/jobs/ingest/<workflow_id>
    ```
 
