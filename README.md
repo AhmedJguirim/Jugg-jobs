@@ -1,23 +1,99 @@
-# Welcome to DBOS!
+# job-hunt
 
-This example app demonstrates the durability of DBOS workflows.
+A job-hunting tool for the Dutch market: tracks employers and pulls vacancies
+from job boards using DBOS durable workflows, backed by PostgreSQL.
+
+See [`docs/architecture.md`](docs/architecture.md) for the design, and
+[`docs/adr/`](docs/adr/) for why each decision was made.
 
 ## Setup
 
-1. Install dependencies and activate your virtual environment
+1. **Dependencies**
+
+   ```shell
+   python -m venv .venv
+   .venv/Scripts/activate          # Windows;  source .venv/bin/activate elsewhere
+   pip install -r requirements.txt -r requirements-dev.txt
+   playwright install chromium     # only needed for the e2e tests
+   ```
+
+2. **Configuration** - copy `.env.example` to `.env` and fill in your
+   PostgreSQL credentials. `.env` is git-ignored.
+
+3. **Databases**
+
+   ```shell
+   psql -U postgres -c "CREATE DATABASE nljobs;"
+   psql -U postgres -c "CREATE DATABASE nljobs_test;"
+   alembic upgrade head
+   ```
+
+4. **Seed data**
+
+   ```shell
+   python scripts/ingest_companies.py --preserve-ids
+   ```
+
+   Idempotent: re-running updates existing rows instead of duplicating them.
+
+5. **Run**
+
+   ```shell
+   python main.py
+   ```
+
+   Then visit <http://localhost:8000>.
+
+## Testing
 
 ```shell
-python3 -m venv .venv
-source .venv/bin/activate
-pip install dbos
+pytest tests/unit -q          # fast; needs PostgreSQL (nljobs_test)
+pytest tests/test_app.py -q   # end-to-end browser tests (Playwright)
+pytest -q                     # everything
+pytest -m "not e2e" -q        # skip the browser tests
 ```
 
-2. Start your app:
+## Development logging
+
+Instead of reading the terminal, follow one clean stream:
+
+```python
+from app.logging_setup import log, section
+
+section("parsing resumes")
+log.info("value=%s", value)
+```
+
+Everything lands in `logs/dev.log`, including DBOS's own log lines. Follow it
+with `tail -f logs/dev.log`.
+
+## Command audit log
+
+Every shell command run against this project by an automated agent is recorded
+with a risk level (`none` - `low` - `medium` - `high` - `severe`):
 
 ```shell
-python3 app/main.py
+python tools/cmdlog.py report                 # what has been run
+python tools/cmdlog.py report --min-risk high # only the dangerous ones
+python tools/cmdlog.py verify                 # flag under-reported risk
 ```
 
-Visit [`http://localhost:8000`](http://localhost:8000) to see your app!
+Trail: `logs/command_audit.log` (human) and `logs/command_audit.jsonl` (machine).
 
-Then check out the [programming guide](https://docs.dbos.dev/python/programming-guide) to learn more about building with DBOS.
+## Layout
+
+```
+main.py                     FastAPI routes + DBOS workflows
+app/config.py               settings from env/.env
+app/db/                     engine, session, models, base
+app/repositories/           CRUD; all SQL lives here
+app/schemas/                pydantic DTOs (public contract)
+app/integrations/nvb/       Nationale Vacaturebank client + response models
+app/logging_setup.py        file logger for development
+alembic/                    migrations
+scripts/                    operational one-shots (ingest)
+tools/cmdlog.py             command audit log
+tests/unit/                 fast tests (PostgreSQL)
+tests/test_app.py           end-to-end browser tests
+docs/                       architecture + ADRs
+```
