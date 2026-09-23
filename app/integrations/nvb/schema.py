@@ -116,22 +116,6 @@ class DcoTitle(_Base):
     source: Optional[str] = None
 
 
-class Logos(_Base):
-    """Logo URLs keyed by pixel size; null on the job when there is no logo.
-
-    Sizes seen: 90x32, 100x35, 110x39, 152x54, 180x64, 199x71, 260x92, 345x122,
-    1000x1000. The keys are not valid Python identifiers, so read them with
-    `logos.get("1000x1000")`.
-    """
-
-    def get(self, size: str) -> Optional[str]:
-        return (self.model_extra or {}).get(size)
-
-    @property
-    def largest(self) -> Optional[str]:
-        return self.get("1000x1000")
-
-
 # ---- the vacancy ----
 
 
@@ -148,7 +132,6 @@ class Job(_Base):
     work_location: Optional[WorkLocation] = Field(default=None, alias="workLocation")
     working_hours: Optional[WorkingHours] = Field(default=None, alias="workingHours")
     salary: Optional[Salary] = None  # null on most records
-    logos: Optional[Logos] = None  # null when the employer has no logo
     metadata: Optional[Metadata] = None
 
     # ISO-8601 with a Z suffix; pydantic parses these into datetimes.
