@@ -329,6 +329,22 @@ def _coerce_choice(value: Any, allowed: set[str], default: str) -> str:
     return text if text in allowed else default
 
 
+def _profile_has_eu_authorization(profile: CandidateProfile) -> bool:
+    """Whether the candidate may already work in the target country.
+
+    Read from the profile's `location.work_authorization` text: a profile that
+    says it holds no permit, or needs sponsorship, is treated as unauthorised.
+    Absent or empty, the candidate is assumed authorised - the conservative
+    reading for a profile that never mentions the subject.
+    """
+    text = str((profile.location or {}).get("work_authorization") or "").lower()
+    if not text:
+        return True
+    lacks = ("no eu", "no work permit", "needs visa", "needs sponsorship",
+             "requires sponsorship", "no netherlands work permit", "without a permit")
+    return not any(phrase in text for phrase in lacks)
+
+
 def _score_to_verdict(score: int) -> str:
     if score >= 80:
         return "strong_match"
@@ -432,6 +448,20 @@ def assess_job(
     score = max(low, min(high, max(0, min(100, score))))
 
     verdict = _coerce_choice(data.get("verdict"), VERDICTS, _score_to_verdict(score))
+    remote = _coerce_choice(data.get("remote"), REMOTE_VALUES, "unknown")
+    dutch_required = bool(data.get("dutch_required", False))
+
+    # Work authorisation is a rule, not a judgement, so it is applied here.
+    # The model claimed one on-site internship needed no sponsorship because
+    # "the candidate is eligible for remote work" - which the vacancy never
+    # said; its own `remote` field was "unknown". On a Dutch job board, a role
+    # that is not explicitly fully remote is in the Netherlands, and a candidate
+    # without an EU permit needs sponsorship for it. Anything but a confirmed
+    # remote role therefore requires sponsorship.
+    needs_permit = not _profile_has_eu_authorization(profile)
+    sponsorship_required = needs_permit and remote != "remote"
+
+    blocked = bool(data.get("blocked", False)) or sponsorship_required or dutch_required
 
     return AssessmentResult(
         fit_score=score,
@@ -439,10 +469,10 @@ def assess_job(
         seniority=_coerce_choice(data.get("seniority"), SENIORITIES, "unknown"),
         stack_match=stack_match,
         seniority_fit=_coerce_choice(data.get("seniority_fit"), SENIORITY_FITS, "unknown"),
-        dutch_required=bool(data.get("dutch_required", False)),
-        sponsorship_required=bool(data.get("sponsorship_required", False)),
-        blocked=bool(data.get("blocked", False)),
-        remote=_coerce_choice(data.get("remote"), REMOTE_VALUES, "unknown"),
+        dutch_required=dutch_required,
+        sponsorship_required=sponsorship_required,
+        blocked=blocked,
+        remote=remote,
         summary=str(data.get("summary") or "").strip()[:2000],
         matched_requirements=_coerce_list(data.get("matched_requirements")),
         missing_requirements=_coerce_list(data.get("missing_requirements")),

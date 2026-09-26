@@ -292,12 +292,51 @@ class TestAssessJob:
         assert result.stack_match == "unrelated"
         assert result.fit_score == 30
 
-    def test_sponsorship_requirement_is_captured(self, monkeypatch, profile):
+    def test_sponsorship_is_derived_in_code_not_taken_from_the_model(
+        self, monkeypatch, profile
+    ):
+        """The model claimed an on-site internship needed no sponsorship because
+        "the candidate is eligible for remote work" - which the vacancy never
+        said. Anything but a confirmed remote role needs a permit."""
+        profile.location = {"work_authorization": "No EU work permit; needs sponsorship"}
         monkeypatch.setattr(
-            service, "chat", FakeLlm(valid_assessment(sponsorship_required=True))
+            service,
+            "chat",
+            FakeLlm(valid_assessment(sponsorship_required=False, remote="unknown", blocked=False)),
         )
 
-        assert assess_job(**CORE_JOB, profile=profile).sponsorship_required is True
+        result = assess_job(**CORE_JOB, profile=profile)
+
+        assert result.sponsorship_required is True
+        assert result.blocked is True
+
+    def test_a_fully_remote_role_needs_no_sponsorship(self, monkeypatch, profile):
+        profile.location = {"work_authorization": "No EU work permit; needs sponsorship"}
+        monkeypatch.setattr(
+            service,
+            "chat",
+            FakeLlm(valid_assessment(remote="remote", blocked=False, dutch_required=False)),
+        )
+
+        result = assess_job(**CORE_JOB, profile=profile)
+
+        assert result.sponsorship_required is False
+        assert result.blocked is False
+
+    def test_an_authorised_candidate_never_needs_sponsorship(self, monkeypatch, profile):
+        profile.location = {"work_authorization": "EU citizen, free to work in the NL"}
+        monkeypatch.setattr(
+            service, "chat", FakeLlm(valid_assessment(remote="onsite", blocked=False))
+        )
+
+        assert assess_job(**CORE_JOB, profile=profile).sponsorship_required is False
+
+    def test_dutch_requirement_always_blocks(self, monkeypatch, profile):
+        monkeypatch.setattr(
+            service, "chat", FakeLlm(valid_assessment(dutch_required=True, blocked=False))
+        )
+
+        assert assess_job(**CORE_JOB, profile=profile).blocked is True
 
     def test_seniority_fit_is_captured(self, monkeypatch, profile):
         monkeypatch.setattr(

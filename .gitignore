@@ -171,3 +171,6 @@ cython_debug/
 
 # Playwright
 test-results/
+
+# DBOS system databases created by scripts and ad-hoc runs
+*.sqlite
