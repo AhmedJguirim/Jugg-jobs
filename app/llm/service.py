@@ -33,6 +33,8 @@ from app.text import chunk_text
 VERDICTS = {"strong_match", "possible", "weak", "irrelevant"}
 SENIORITIES = {"intern", "junior", "mid", "senior", "lead", "unknown"}
 REMOTE_VALUES = {"onsite", "hybrid", "remote", "unknown"}
+STACK_MATCHES = {"core", "proficient", "familiar", "unrelated", "non_technical"}
+SENIORITY_FITS = {"under_qualified", "good", "over_qualified", "unknown"}
 
 # Small models sometimes wrap output in fences or a preamble despite being told
 # not to; strip that rather than discarding an otherwise good answer.
@@ -63,7 +65,12 @@ class AssessmentResult:
     fit_score: int
     verdict: str
     seniority: str = "unknown"
+    # Which tier of the candidate's skills the vacancy's primary stack sits in;
+    # this is what anchors fit_score to a band (ADR-0008).
+    stack_match: str = "unrelated"
+    seniority_fit: str = "unknown"
     dutch_required: bool = False
+    sponsorship_required: bool = False
     blocked: bool = False
     remote: str = "unknown"
     summary: str = ""
@@ -83,6 +90,114 @@ class AssessmentResult:
 def _clean_output(value: str) -> str:
     value = _FENCE.sub("", value.strip())
     return _PREAMBLE.sub("", value).strip()
+
+
+
+# ---------------------------------------------------------------------------
+# Stack tier detection
+# ---------------------------------------------------------------------------
+
+# Bands each tier maps to. The model scores *within* the band it is given; the
+# band itself is decided here.
+STACK_BANDS = {
+    "core": (75, 95),
+    "proficient": (55, 75),
+    "familiar": (30, 55),
+    "unrelated": (10, 30),
+    "non_technical": (0, 10),
+}
+
+
+def _mentions(text: str, skill: str) -> bool:
+    r"""Whole-word, case-insensitive match.
+
+    The \b anchors matter: without them "Java" fires inside "JavaScript" and
+    "Go" inside "Going", silently mis-tiering a vacancy.
+    """
+    pattern = r"\b" + re.escape(skill) + r"\b"
+    return re.search(pattern, text, re.IGNORECASE) is not None
+
+
+# Words that mark a vacancy as a software role at all. Without one of these and
+# without any skill hit, the vacancy is not a technical job.
+_TECH_MARKERS = (
+    "developer", "engineer", "software", "backend", "back-end", "frontend",
+    "front-end", "fullstack", "full-stack", "programmer", "programming", "api",
+    "database", "devops", "architect", "webdeveloper", "ontwikkelaar",
+    "programmeur", "softwareontwikkelaar",
+)
+
+# A skill named in the title says far more about the role than one buried in a
+# list of nice-to-haves, so title hits dominate the tier decision.
+_TITLE_WEIGHT = 10
+_BODY_SKILL_WEIGHT = 2
+_REPEAT_WEIGHT = 0.5
+_MAX_REPEATS = 4
+
+
+def _count(text: str, skill: str) -> int:
+    pattern = r"\b" + re.escape(skill) + r"\b"
+    return len(re.findall(pattern, text, re.IGNORECASE))
+
+
+def classify_stack(
+    title: str, description: str, profile: CandidateProfile
+) -> tuple[str, list[str]]:
+    """Decide which of the candidate's skill tiers a vacancy's stack falls in.
+
+    Done in code rather than by the model. A 4B repeatedly labelled a Python
+    vacancy "unrelated" even when Python sat in the candidate's familiar tier
+    and the prompt said so with a worked example - it conflated "not their
+    strongest stack" with "not in their skill set". Tier membership is an exact
+    lookup, so it is computed exactly and the model is left with the part that
+    genuinely needs judgement: placing the score inside the band.
+
+    Scoring, rather than first-match, because first-match is wrong on real
+    vacancies: a Python role that mentions PHP once in a list of nice-to-haves
+    would otherwise be classed as core PHP work. A skill in the *title* weighs
+    far more than one buried in the body, and repeated mentions count for a
+    little more than a single aside.
+
+    Returns the winning tier and the skills that matched it.
+    """
+    title = title or ""
+    body = description or ""
+    combined = f"{title}\n{body}"
+
+    scores: dict[str, float] = {}
+    hits: dict[str, list[str]] = {}
+
+    for tier, skills in (
+        ("core", profile.core_skills),
+        ("proficient", profile.proficient_skills),
+        ("familiar", profile.peripheral_skills),
+    ):
+        score = 0.0
+        matched: list[str] = []
+        for skill in skills:
+            in_title = _count(title, skill)
+            in_body = _count(body, skill)
+            if not in_title and not in_body:
+                continue
+            matched.append(skill)
+            score += in_title * _TITLE_WEIGHT
+            if in_body:
+                score += _BODY_SKILL_WEIGHT
+                score += min(in_body - 1, _MAX_REPEATS) * _REPEAT_WEIGHT
+        if matched:
+            scores[tier] = score
+            hits[tier] = matched
+
+    if scores:
+        # Ties break towards the stronger tier, which is the order they are in.
+        order = {"core": 0, "proficient": 1, "familiar": 2}
+        best = min(scores, key=lambda tier: (-scores[tier], order[tier]))
+        return best, hits[best]
+
+    lowered = combined.lower()
+    if any(marker in lowered for marker in _TECH_MARKERS):
+        return "unrelated", []
+    return "non_technical", []
 
 
 # ---------------------------------------------------------------------------
@@ -235,6 +350,12 @@ def assess_job(
     coerced into range rather than trusted, so a hallucinated verdict cannot
     reach the database.
     """
+    # The tier is a lookup, not a judgement call, so it is computed here and
+    # handed to the model as a fact. The model's job is to place the score
+    # inside that band - see classify_stack.
+    stack_match, matched_skills = classify_stack(title, description, profile)
+    low, high = STACK_BANDS[stack_match]
+
     messages = assessment_messages(
         title=title,
         company=company,
@@ -244,6 +365,9 @@ def assess_job(
         education=education,
         description=description,
         profile_text=profile.as_prompt_text(),
+        stack_match=stack_match,
+        matched_skills=matched_skills,
+        band=(low, high),
     )
 
     result = chat(
@@ -281,7 +405,9 @@ def assess_job(
         score = int(float(data.get("fit_score", 0)))
     except (TypeError, ValueError):
         score = 0
-    score = max(0, min(100, score))
+    # Clamp into the band the tier dictates: a small model will occasionally
+    # ignore the range it was given, and the tier is the more trustworthy signal.
+    score = max(low, min(high, max(0, min(100, score))))
 
     verdict = _coerce_choice(data.get("verdict"), VERDICTS, _score_to_verdict(score))
 
@@ -289,7 +415,10 @@ def assess_job(
         fit_score=score,
         verdict=verdict,
         seniority=_coerce_choice(data.get("seniority"), SENIORITIES, "unknown"),
+        stack_match=stack_match,
+        seniority_fit=_coerce_choice(data.get("seniority_fit"), SENIORITY_FITS, "unknown"),
         dutch_required=bool(data.get("dutch_required", False)),
+        sponsorship_required=bool(data.get("sponsorship_required", False)),
         blocked=bool(data.get("blocked", False)),
         remote=_coerce_choice(data.get("remote"), REMOTE_VALUES, "unknown"),
         summary=str(data.get("summary") or "").strip()[:2000],

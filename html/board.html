@@ -113,7 +113,7 @@
 
       <!-- ── Filters ────────────────────────────────────────────────── -->
       <section class="rounded-lg border border-ink-border bg-ink-raised p-4 mb-6">
-        <div class="grid gap-4 lg:grid-cols-[minmax(0,2fr)_repeat(3,minmax(0,1fr))]">
+        <div class="grid gap-4 lg:grid-cols-[minmax(0,2fr)_repeat(4,minmax(0,1fr))]">
           <div>
             <label class="block text-[11px] uppercase tracking-wider text-fg-muted mb-1">Search</label>
             <input
@@ -137,6 +137,16 @@
               <option value="">Anywhere</option>
               <template x-for="city in facets.cities" :key="city">
                 <option :value="city" x-text="city"></option>
+              </template>
+            </select>
+          </div>
+          <div>
+            <label class="block text-[11px] uppercase tracking-wider text-fg-muted mb-1">Stack</label>
+            <select x-model="filters.stack"
+                    class="w-full bg-ink border border-ink-border rounded-md px-3 py-2 text-sm focus:outline-none focus:border-splice/70">
+              <option value="">Any stack</option>
+              <template x-for="tier in facets.stack_tiers" :key="tier">
+                <option :value="tier" x-text="stackLabel(tier)"></option>
               </template>
             </select>
           </div>
@@ -227,6 +237,14 @@
                         class="shrink-0 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border border-warn/50 text-warn">
                     Dutch
                   </span>
+                  <span x-show="job.sponsorship_required"
+                        class="shrink-0 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border border-lily/50 text-lily">
+                    visa
+                  </span>
+                  <span x-show="job.stack_match"
+                        class="shrink-0 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border"
+                        :class="stackClass(job.stack_match)"
+                        x-text="stackLabel(job.stack_match)"></span>
                   <span x-show="job.verdict"
                         class="shrink-0 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border"
                         :class="verdictClass(job.verdict)"
@@ -434,6 +452,16 @@
         return (terms || []).map(en).join(", ");
       }
 
+      function stackLabelOf(tier) {
+        return {
+          core: "core stack - daily production skills",
+          proficient: "proficient - comfortable, not main stack",
+          familiar: "familiar only - no production depth",
+          unrelated: "a stack not in the profile",
+          non_technical: "not a software role",
+        }[tier] || "unknown";
+      }
+
       function board() {
         return {
           jobs: [],
@@ -453,6 +481,7 @@
             includeBlocked: true,
             hideDutch: false,
             onlyAssessed: false,
+            stack: "",
           },
 
           async load() {
@@ -480,7 +509,7 @@
               { label: "worth a look", value: s.actionable ?? 0, accent: "text-splice" },
               { label: "blocked", value: s.blocked ?? 0, accent: "text-danger" },
               { label: "need Dutch", value: s.needs_dutch ?? 0, accent: "text-warn" },
-              { label: "employers", value: s.companies ?? 0, accent: "text-lily" },
+              { label: "core stack", value: (s.stack_tiers || {}).core ?? 0, accent: "text-splice" },
               { label: "GPU seconds", value: Math.round(s.gpu_seconds_spent ?? 0), accent: "text-cyan" },
             ];
           },
@@ -493,6 +522,7 @@
               if (!f.includeBlocked && job.blocked) return false;
               if (f.hideDutch && job.dutch_required) return false;
               if (f.city && job.city !== f.city) return false;
+              if (f.stack && job.stack_match !== f.stack) return false;
               // Ungraded vacancies have no score; only filter them out once the
               // threshold is actually raised above zero.
               if (f.minScore > 0 && (job.fit_score ?? -1) < f.minScore) return false;
@@ -532,13 +562,33 @@
           reset() {
             this.filters = {
               q: "", minScore: 0, city: "", sort: "fit",
-              includeBlocked: true, hideDutch: false, onlyAssessed: false,
+              includeBlocked: true, hideDutch: false, onlyAssessed: false, stack: "",
             };
           },
 
           pct(done, total) {
             if (!total) return 0;
             return Math.round((done / total) * 100);
+          },
+
+          stackLabel(tier) {
+            return {
+              core: "core stack",
+              proficient: "proficient",
+              familiar: "familiar only",
+              unrelated: "other stack",
+              non_technical: "non-technical",
+            }[tier] || tier;
+          },
+
+          stackClass(tier) {
+            return {
+              core: "border-splice/50 text-splice",
+              proficient: "border-cyan/50 text-cyan",
+              familiar: "border-warn/50 text-warn",
+              unrelated: "border-ink-border text-fg-muted",
+              non_technical: "border-ink-border text-fg-muted",
+            }[tier] || "border-ink-border text-fg-muted";
           },
 
           scoreColor(job) {
@@ -561,7 +611,10 @@
 
           facts(job) {
             return [
+              { label: "stack match", value: stackLabelOf(job.stack_match) },
               { label: "seniority", value: job.seniority || "unknown" },
+              { label: "seniority fit", value: (job.seniority_fit || "unknown").replace(/_/g, " ") },
+              { label: "needs visa", value: job.sponsorship_required ? "yes - no EU permit" : "no" },
               { label: "work setup", value: job.remote || "unknown" },
               { label: "salary", value: job.salary || "not stated" },
               { label: "hours", value: job.hours || "not stated" },

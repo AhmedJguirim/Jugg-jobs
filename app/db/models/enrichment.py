@@ -84,7 +84,18 @@ class JobAssessment(Base, TimestampMixin):
     seniority: Mapped[str | None] = mapped_column(String(32), nullable=True)
     remote: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
+    # Which tier of the candidate's skills the vacancy's stack falls into.
+    # Stored as a column, not just inside `details`, because "show me every
+    # core-stack role" is the query this whole pipeline exists to answer.
+    stack_match: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    seniority_fit: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
     dutch_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # server_default so the column can be added to a table that already has
+    # assessment rows without a separate backfill.
+    sponsorship_required: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
     blocked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)

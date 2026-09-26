@@ -42,10 +42,21 @@ def profile() -> CandidateProfile:
         name="test",
         headline="Backend engineer",
         target_roles=["Backend Developer"],
-        strong_skills=["Python"],
+        skills={
+            "core": ["PHP", "Laravel"],
+            "proficient": ["ReactJS"],
+            "familiar": ["Python"],
+        },
         languages={"fluent": ["English"], "none": ["Dutch"]},
         dealbreakers=["requires fluent Dutch"],
     )
+
+
+# Descriptions that land a vacancy in a known tier, so a test can predict the
+# band its score will be clamped into.
+CORE_JOB = {"title": "Laravel Developer", "description": "Build Laravel and PHP services."}
+FAMILIAR_JOB = {"title": "Python Developer", "description": "Write Python all day."}
+UNRELATED_JOB = {"title": "Go Engineer", "description": "Write Go and Kafka consumers."}
 
 
 def valid_assessment(**overrides) -> str:
@@ -53,7 +64,10 @@ def valid_assessment(**overrides) -> str:
         "fit_score": 82,
         "verdict": "strong_match",
         "seniority": "senior",
+        "stack_match": "core",
+        "seniority_fit": "good",
         "dutch_required": False,
+        "sponsorship_required": False,
         "blocked": False,
         "remote": "hybrid",
         "summary": "A backend role using Python.",
@@ -181,7 +195,7 @@ class TestAssessJob:
     def test_parses_a_valid_assessment(self, monkeypatch, profile):
         monkeypatch.setattr(service, "chat", FakeLlm(valid_assessment()))
 
-        result = assess_job(title="Backend Developer", description="Python role", profile=profile)
+        result = assess_job(**CORE_JOB, profile=profile)
 
         assert result.fit_score == 82
         assert result.verdict == "strong_match"
@@ -192,32 +206,32 @@ class TestAssessJob:
         fake = FakeLlm(valid_assessment())
         monkeypatch.setattr(service, "chat", fake)
 
-        assess_job(title="t", description="d", profile=profile)
+        assess_job(**CORE_JOB, profile=profile)
 
         assert fake.calls[0]["json_format"] is True
 
     def test_records_the_profile_name(self, monkeypatch, profile):
         monkeypatch.setattr(service, "chat", FakeLlm(valid_assessment()))
 
-        assert assess_job(title="t", description="d", profile=profile).profile_name == "test"
+        assert assess_job(**CORE_JOB, profile=profile).profile_name == "test"
 
     def test_parses_json_wrapped_in_prose(self, monkeypatch, profile):
         monkeypatch.setattr(
             service, "chat", FakeLlm(f"Sure! Here it is:\n{valid_assessment()}\nHope that helps.")
         )
 
-        assert assess_job(title="t", description="d", profile=profile).fit_score == 82
+        assert assess_job(**CORE_JOB, profile=profile).fit_score == 82
 
     def test_parses_json_in_code_fences(self, monkeypatch, profile):
         monkeypatch.setattr(service, "chat", FakeLlm(f"```json\n{valid_assessment()}\n```"))
 
-        assert assess_job(title="t", description="d", profile=profile).fit_score == 82
+        assert assess_job(**CORE_JOB, profile=profile).fit_score == 82
 
     def test_repairs_malformed_json_with_one_retry(self, monkeypatch, profile):
         fake = FakeLlm("{not valid json at all", valid_assessment())
         monkeypatch.setattr(service, "chat", fake)
 
-        result = assess_job(title="t", description="d", profile=profile)
+        result = assess_job(**CORE_JOB, profile=profile)
 
         assert result.repaired is True
         assert result.fit_score == 82
@@ -227,48 +241,97 @@ class TestAssessJob:
         monkeypatch.setattr(service, "chat", FakeLlm("nonsense", "still nonsense"))
 
         with pytest.raises((ValueError, json.JSONDecodeError)):
-            assess_job(title="t", description="d", profile=profile)
+            assess_job(**CORE_JOB, profile=profile)
 
-    def test_score_above_range_is_clamped(self, monkeypatch, profile):
+    def test_score_is_clamped_into_the_tier_band(self, monkeypatch, profile):
+        """A core-stack vacancy cannot score above its band however the model replies."""
         monkeypatch.setattr(service, "chat", FakeLlm(valid_assessment(fit_score=250)))
 
-        assert assess_job(title="t", description="d", profile=profile).fit_score == 100
+        assert assess_job(**CORE_JOB, profile=profile).fit_score == 95
 
-    def test_negative_score_is_clamped(self, monkeypatch, profile):
+    def test_score_below_the_band_is_raised_into_it(self, monkeypatch, profile):
         monkeypatch.setattr(service, "chat", FakeLlm(valid_assessment(fit_score=-10)))
 
-        assert assess_job(title="t", description="d", profile=profile).fit_score == 0
+        assert assess_job(**CORE_JOB, profile=profile).fit_score == 75
 
-    def test_non_numeric_score_becomes_zero(self, monkeypatch, profile):
+    def test_non_numeric_score_falls_back_into_the_band(self, monkeypatch, profile):
         monkeypatch.setattr(service, "chat", FakeLlm(valid_assessment(fit_score="very good")))
 
-        assert assess_job(title="t", description="d", profile=profile).fit_score == 0
+        assert assess_job(**CORE_JOB, profile=profile).fit_score == 75
 
     def test_invalid_verdict_is_derived_from_the_score(self, monkeypatch, profile):
         monkeypatch.setattr(
             service, "chat", FakeLlm(valid_assessment(verdict="amazing", fit_score=90))
         )
 
-        assert assess_job(title="t", description="d", profile=profile).verdict == "strong_match"
+        assert assess_job(**CORE_JOB, profile=profile).verdict == "strong_match"
+
+    def test_stack_tier_comes_from_code_not_the_model(self, monkeypatch, profile):
+        """The model's own stack_match is ignored; the lookup is authoritative."""
+        monkeypatch.setattr(
+            service, "chat", FakeLlm(valid_assessment(stack_match="non_technical"))
+        )
+
+        assert assess_job(**CORE_JOB, profile=profile).stack_match == "core"
+
+    def test_familiar_stack_scores_in_its_lower_band(self, monkeypatch, profile):
+        monkeypatch.setattr(service, "chat", FakeLlm(valid_assessment(fit_score=95)))
+
+        result = assess_job(**FAMILIAR_JOB, profile=profile)
+
+        assert result.stack_match == "familiar"
+        assert result.fit_score == 55
+
+    def test_unrelated_stack_scores_low_however_enthusiastic_the_model(
+        self, monkeypatch, profile
+    ):
+        monkeypatch.setattr(service, "chat", FakeLlm(valid_assessment(fit_score=99)))
+
+        result = assess_job(**UNRELATED_JOB, profile=profile)
+
+        assert result.stack_match == "unrelated"
+        assert result.fit_score == 30
+
+    def test_sponsorship_requirement_is_captured(self, monkeypatch, profile):
+        monkeypatch.setattr(
+            service, "chat", FakeLlm(valid_assessment(sponsorship_required=True))
+        )
+
+        assert assess_job(**CORE_JOB, profile=profile).sponsorship_required is True
+
+    def test_seniority_fit_is_captured(self, monkeypatch, profile):
+        monkeypatch.setattr(
+            service, "chat", FakeLlm(valid_assessment(seniority_fit="under_qualified"))
+        )
+
+        assert assess_job(**CORE_JOB, profile=profile).seniority_fit == "under_qualified"
+
+    def test_invalid_seniority_fit_becomes_unknown(self, monkeypatch, profile):
+        monkeypatch.setattr(service, "chat", FakeLlm(valid_assessment(seniority_fit="meh")))
+
+        assert assess_job(**CORE_JOB, profile=profile).seniority_fit == "unknown"
 
     def test_invalid_seniority_becomes_unknown(self, monkeypatch, profile):
         monkeypatch.setattr(service, "chat", FakeLlm(valid_assessment(seniority="wizard")))
 
-        assert assess_job(title="t", description="d", profile=profile).seniority == "unknown"
+        assert assess_job(**CORE_JOB, profile=profile).seniority == "unknown"
 
     def test_string_instead_of_list_is_coerced(self, monkeypatch, profile):
         monkeypatch.setattr(
             service, "chat", FakeLlm(valid_assessment(red_flags="requires Dutch"))
         )
 
-        assert assess_job(title="t", description="d", profile=profile).red_flags == ["requires Dutch"]
+        assert assess_job(**CORE_JOB, profile=profile).red_flags == ["requires Dutch"]
 
     def test_missing_fields_get_safe_defaults(self, monkeypatch, profile):
         monkeypatch.setattr(service, "chat", FakeLlm(json.dumps({"fit_score": 50})))
 
-        result = assess_job(title="t", description="d", profile=profile)
+        result = assess_job(**CORE_JOB, profile=profile)
 
-        assert result.verdict == "weak"
+        # 50 is below the core band, so it is raised to its floor of 75. The
+        # verdict is then derived from that: strong_match starts at 80, so the
+        # bottom of the core band is "possible".
+        assert result.verdict == "possible"
         assert result.red_flags == []
         assert result.summary == ""
 
@@ -280,7 +343,7 @@ class TestAssessJob:
             FakeLlm(valid_assessment(fit_score=85, blocked=True, dutch_required=True)),
         )
 
-        result = assess_job(title="t", description="d", profile=profile)
+        result = assess_job(**CORE_JOB, profile=profile)
 
         assert result.fit_score == 85
         assert result.verdict == "strong_match"
@@ -291,7 +354,7 @@ class TestAssessJob:
         fake = FakeLlm(valid_assessment())
         monkeypatch.setattr(service, "chat", fake)
 
-        assess_job(title="t", description="d", profile=profile)
+        assess_job(**CORE_JOB, profile=profile)
 
         user_message = fake.calls[0]["messages"][1]["content"]
         assert "Backend Developer" in user_message
@@ -302,8 +365,7 @@ class TestAssessJob:
         monkeypatch.setattr(service, "chat", fake)
 
         assess_job(
-            title="Python Developer",
-            description="body",
+            **CORE_JOB,
             profile=profile,
             company="Acme",
             location="Utrecht",
@@ -322,4 +384,4 @@ class TestAssessJob:
             FakeLlm(valid_assessment(red_flags=[f"flag {i}" for i in range(40)])),
         )
 
-        assert len(assess_job(title="t", description="d", profile=profile).red_flags) <= 8
+        assert len(assess_job(**CORE_JOB, profile=profile).red_flags) <= 8

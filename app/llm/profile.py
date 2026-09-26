@@ -1,12 +1,24 @@
 """The candidate profile a vacancy is scored against.
 
-Profiles live in `profiles/<name>.json` so they are edited as data, not code,
-and so several can coexist (one per role you are hunting for). The profile name
-is stored on every assessment row, which keeps scores from different profiles
-from being compared by accident.
+Profiles live in `profiles/<name>.json` so they are edited as data, not code, and
+so several can coexist. The profile name is stored on every assessment, which
+keeps scores produced under different profiles from being compared by accident.
+
+**Skills are tiered, not flat.** A vacancy built on a stack you use in
+production every day is a different proposition from one built on a language you
+have only touched, even though both "match" a flat keyword list. `skills.core`,
+`skills.proficient` and `skills.familiar` drive the scoring bands in the
+assessment prompt - see `prompts.ASSESSMENT_SYSTEM` and ADR-0008.
+
+**Eligibility is described separately from skill.** Where you are, what you are
+authorised to work as, and which languages you speak decide whether a role is
+*reachable*; they must not quietly drag down how well the work itself fits.
 
 `as_prompt_text()` renders the profile as compact labelled lines. A 4B model
 handles that far better than raw JSON, which it tends to echo back.
+
+The older flat format (`strong_skills` / `familiar_skills`) still loads, so
+existing profiles keep working.
 """
 
 from __future__ import annotations
@@ -31,12 +43,24 @@ class ProfileNotFound(FileNotFoundError):
 class CandidateProfile:
     name: str
     headline: str = ""
-    target_roles: list[str] = field(default_factory=list)
+    summary: str = ""
+    years_experience: float | None = None
     seniority: list[str] = field(default_factory=list)
+
+    # Tiered skills. `skills` is the current shape; the flat fields below are
+    # kept so older profiles still load.
+    skills: dict[str, list[str]] = field(default_factory=dict)
     strong_skills: list[str] = field(default_factory=list)
     familiar_skills: list[str] = field(default_factory=list)
+
+    # What makes this candidate unusual, beyond a list of technologies.
+    differentiators: list[str] = field(default_factory=list)
+    domains: list[str] = field(default_factory=list)
+
+    target_roles: list[str] = field(default_factory=list)
     not_interested_in: list[str] = field(default_factory=list)
-    languages: dict[str, list[str]] = field(default_factory=dict)
+
+    languages: dict[str, Any] = field(default_factory=dict)
     location: dict[str, Any] = field(default_factory=dict)
     dealbreakers: list[str] = field(default_factory=list)
     raw: dict = field(default_factory=dict, repr=False)
@@ -46,24 +70,72 @@ class CandidateProfile:
         known = {f for f in cls.__dataclass_fields__ if f != "raw"}
         return cls(**{k: v for k, v in data.items() if k in known}, raw=data)
 
+    # -- tier accessors, tolerant of either profile shape --
+
+    @property
+    def core_skills(self) -> list[str]:
+        return self.skills.get("core", self.strong_skills)
+
+    @property
+    def proficient_skills(self) -> list[str]:
+        return self.skills.get("proficient", [])
+
+    @property
+    def peripheral_skills(self) -> list[str]:
+        return self.skills.get("familiar", self.familiar_skills)
+
+    def _language_line(self) -> tuple[str, str]:
+        languages = self.languages or {}
+        spoken: list[str] = []
+        for level in ("native", "fluent", "proficient", "basic"):
+            values = languages.get(level)
+            if not values:
+                continue
+            if isinstance(values, str):
+                values = [values]
+            spoken.append(f"{', '.join(values)} ({level})")
+        absent = languages.get("none") or []
+        if isinstance(absent, str):
+            absent = [absent]
+        return ("; ".join(spoken) or "unspecified", ", ".join(absent) or "none stated")
+
     def as_prompt_text(self) -> str:
         """Render the profile for the assessment prompt."""
-        languages = self.languages or {}
-        fluent = ", ".join(languages.get("fluent", [])) or "unspecified"
-        absent = ", ".join(languages.get("none", [])) or "none stated"
+        spoken, absent = self._language_line()
         location = self.location or {}
 
-        lines = [
-            f"Headline: {self.headline or 'unspecified'}",
-            f"Target roles: {', '.join(self.target_roles) or 'any'}",
+        lines = [f"Headline: {self.headline or 'unspecified'}"]
+        if self.summary:
+            lines.append(f"Summary: {self.summary}")
+        if self.years_experience is not None:
+            lines.append(f"Years of professional experience: {self.years_experience}")
+
+        lines += [
             f"Target seniority: {', '.join(self.seniority) or 'any'}",
-            f"Strong skills: {', '.join(self.strong_skills) or 'unspecified'}",
-            f"Familiar skills: {', '.join(self.familiar_skills) or 'none'}",
-            f"Languages spoken: {fluent}",
-            f"Languages NOT spoken: {absent}",
-            f"Location: {location.get('country', 'any')}"
-            + (f"; prefers {', '.join(location.get('preferred', []))}" if location.get("preferred") else ""),
-            f"Work arrangement: {location.get('remote_preference', 'no preference')}",
+            f"Target roles: {', '.join(self.target_roles) or 'any'}",
+            "",
+            "SKILL TIERS (these decide the score band):",
+            f"  CORE - used in production, daily: {', '.join(self.core_skills) or 'unspecified'}",
+            f"  PROFICIENT - used and comfortable: {', '.join(self.proficient_skills) or 'none'}",
+            f"  FAMILIAR - touched only, not production depth: "
+            f"{', '.join(self.peripheral_skills) or 'none'}",
+        ]
+
+        if self.differentiators:
+            lines.append(f"Particular strengths: {'; '.join(self.differentiators)}")
+        if self.domains:
+            lines.append(f"Domains worked in: {', '.join(self.domains)}")
+
+        lines += [
+            "",
+            "ELIGIBILITY (never lowers the fit score; report it separately):",
+            f"  Languages spoken: {spoken}",
+            f"  Languages NOT spoken: {absent}",
+            f"  Currently based in: {location.get('based_in', 'unspecified')}",
+            f"  Work authorisation: {location.get('work_authorization', 'unspecified')}",
+            f"  Relocation: {location.get('relocation', 'unspecified')}",
+            f"  Work arrangement: {location.get('remote_preference', 'no preference')}",
+            "",
             f"Not interested in: {', '.join(self.not_interested_in) or 'nothing excluded'}",
             f"Dealbreakers: {', '.join(self.dealbreakers) or 'none'}",
         ]

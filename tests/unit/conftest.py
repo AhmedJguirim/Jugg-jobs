@@ -39,6 +39,12 @@ def engine() -> Engine:
     # The schema is created from the models rather than by running Alembic:
     # these tests verify repository behaviour, and migration correctness is
     # asserted separately in tests/unit/test_migrations.py.
+    #
+    # Dropped first: create_all() will not alter a table that already exists, so
+    # without this a column added to a model since the last run would be missing
+    # and every test touching it would fail confusingly. Safe because this is a
+    # dedicated test database that holds nothing anyone needs.
+    Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
     yield engine
     engine.dispose()

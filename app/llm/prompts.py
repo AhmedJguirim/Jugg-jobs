@@ -23,7 +23,7 @@ prompts do deliberately:
 from __future__ import annotations
 
 TRANSLATION_PROMPT_VERSION = "translate-nl-en-v1"
-ASSESSMENT_PROMPT_VERSION = "assess-v1"
+ASSESSMENT_PROMPT_VERSION = "assess-v2"
 
 # ---------------------------------------------------------------------------
 # Translation
@@ -114,14 +114,17 @@ ASSESSMENT_SCHEMA_DESCRIPTION = """\
 {
   "fit_score": <integer 0-100>,
   "verdict": "<one of: strong_match, possible, weak, irrelevant>",
+  "stack_match": "<one of: core, proficient, familiar, unrelated, non_technical>",
   "seniority": "<one of: intern, junior, mid, senior, lead, unknown>",
+  "seniority_fit": "<one of: under_qualified, good, over_qualified, unknown>",
   "dutch_required": <true or false>,
+  "sponsorship_required": <true or false>,
   "blocked": <true or false>,
   "remote": "<one of: onsite, hybrid, remote, unknown>",
   "summary": "<2-3 sentence plain-English summary of the role>",
-  "matched_requirements": ["<requirement from the profile the vacancy asks for>"],
+  "matched_requirements": ["<requirement the vacancy asks for that the profile has>"],
   "missing_requirements": ["<requirement the vacancy asks for that the profile lacks>"],
-  "red_flags": ["<concrete concern, e.g. 'requires fluent Dutch', 'unpaid'>"],
+  "red_flags": ["<concrete concern, e.g. 'requires fluent Dutch', 'needs 5+ years'>"],
   "reasoning": "<1-2 sentences explaining the score>"
 }\
 """
@@ -133,40 +136,72 @@ candidate profile and return a structured assessment.
 You must return a single JSON object matching this shape exactly:
 {schema}
 
-"fit_score" measures ONE thing: how well the work itself matches the \
-candidate's target roles and skills. Score the job, not the candidate's \
-eligibility.
+## How to score
 
-- 80-100 strong_match: the core role matches the candidate's target roles and \
-most required skills are ones the candidate has.
-- 55-79 possible: related role, or a match with real gaps the candidate could \
-close.
-- 25-54 weak: same broad field but the wrong specialisation or wrong seniority.
-- 0-24 irrelevant: a different profession entirely.
+"fit_score" measures ONE thing: how well THE WORK matches this candidate's \
+skills and target roles. Score the job, not whether they can legally take it.
 
-CRITICAL: do NOT lower "fit_score" because of language, location, work \
-permits, or any other eligibility barrier. A Python role that demands fluent \
-Dutch is still an excellent role match - it scores high on fit_score AND sets \
-"blocked": true. Only the nature of the work moves fit_score. This separation \
-matters: it is what distinguishes a perfect job the candidate cannot take from \
-a job in the wrong profession.
+Step 1 - identify the vacancy's PRIMARY technology stack, then place it in a \
+band using the candidate's skill tiers. This is the most important judgement \
+you make:
 
-Rules:
-1. Judge ONLY on what the vacancy text says. Never invent requirements it does \
-not state.
-2. If the vacancy is in a different profession from the candidate's targets, \
-score it below 25 no matter how well written it is.
-3. Set "dutch_required" to true if the vacancy states or strongly implies \
-Dutch-language ability is needed (written in Dutch alone is NOT sufficient \
-evidence - look for explicit language requirements, or duties like phone \
-contact with Dutch-speaking clients or patients).
-4. Set "blocked" to true if the vacancy hits any of the candidate's stated \
-dealbreakers, and name each one in "red_flags". Otherwise set it to false.
-4. "matched_requirements" and "missing_requirements" must quote or closely \
+- Built on their CORE skills (used in production, daily) \
+-> band 75-95, "stack_match": "core"
+- Built on their PROFICIENT skills (comfortable, not their main stack) \
+-> band 55-75, "stack_match": "proficient"
+- Built on their FAMILIAR skills only (touched, no production depth) \
+-> band 30-55, "stack_match": "familiar"
+- A software role on a stack they do not list at all (e.g. .NET, Go, Salesforce) \
+-> band 10-30, "stack_match": "unrelated"
+- Not a software engineering role at all \
+-> band 0-10, "stack_match": "non_technical"
+
+A vacancy counts as "core" only if a core technology is central to the role, \
+not merely mentioned in passing among a list of tools.
+
+Step 2 - move within that band, never outside it:
+- +5 to +10 if the vacancy explicitly wants one of the candidate's particular \
+strengths (performance optimisation, debugging production issues, queues and \
+background jobs, third-party API integration).
+- +0 to +5 if it is in a domain the candidate has worked in.
+- -5 to -10 if the seniority is a poor fit.
+
+Step 3 - set "seniority_fit" by comparing what the vacancy demands against the \
+candidate's years of experience:
+- "below": the vacancy wants clearly more experience ("senior", "lead", \
+"5+ years") than the candidate has. Also add a red flag naming the gap.
+- "good": the vacancy's level matches the candidate's target seniority.
+- "above": the vacancy is clearly junior to the candidate (e.g. an internship).
+
+## Eligibility - report it, never let it change fit_score
+
+CRITICAL: a perfect-stack role the candidate cannot legally take still scores \
+high on fit_score AND sets "blocked": true. This separation is the entire \
+point: it distinguishes "a great job that is out of reach" from "a job in the \
+wrong field" - different problems with different answers.
+
+- "dutch_required": true only if the vacancy states or strongly implies Dutch \
+language ability is needed. Being WRITTEN in Dutch is NOT sufficient evidence - \
+look for an explicit language requirement, or duties such as phone contact with \
+Dutch-speaking customers or patients.
+- "sponsorship_required": true if the role needs the candidate physically in \
+the Netherlands (on-site or hybrid), because they hold no EU work permit. Set \
+it false only for fully remote roles doable from outside the EU. If the vacancy \
+explicitly offers visa sponsorship or relocation support, note that in \
+"matched_requirements" and keep this true.
+- "blocked": true if the vacancy hits any stated dealbreaker, requires Dutch, \
+or requires sponsorship. Name each reason in "red_flags".
+
+## Rules
+
+1. Judge ONLY on what the vacancy text says. Never invent requirements.
+2. "matched_requirements" and "missing_requirements" must quote or closely \
 paraphrase things the vacancy actually asks for. Keep each item under 12 words.
-5. Leave an array empty rather than padding it with vague entries.
-6. "summary" must be in English even when the vacancy is in Dutch.
-7. Output the JSON object only. No markdown, no code fences, no commentary.\
+3. Leave an array empty rather than padding it with vague entries.
+4. Only list a "not interested in" topic as a red flag if the vacancy is \
+actually about that topic, not because it mentions it in passing.
+5. "summary" must be in English even when the vacancy is in Dutch.
+6. Output the JSON object only. No markdown, no code fences, no commentary.\
 """
 
 
@@ -180,15 +215,24 @@ def assessment_messages(
     education: str | None,
     description: str,
     profile_text: str,
+    stack_match: str = "unrelated",
+    matched_skills: list[str] | None = None,
+    band: tuple[int, int] = (0, 100),
 ) -> list[dict[str, str]]:
     """Build the message list for one assessment call.
 
     The vacancy facts are passed as labelled fields rather than buried in prose,
     which measurably helps a small model keep them straight.
     """
+    skills_line = ", ".join(matched_skills or []) or "none of the candidate's listed skills"
     user = f"""\
 CANDIDATE PROFILE
 {profile_text}
+
+STACK TIER (already determined - do not re-decide it)
+This vacancy's stack falls in the candidate's "{stack_match}" tier, matching: {skills_line}.
+Therefore "fit_score" MUST be between {band[0]} and {band[1]}, and "stack_match" MUST be "{stack_match}".
+Use the range to express how good a match it is within that tier.
 
 VACANCY
 Title: {title}

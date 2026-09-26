@@ -21,6 +21,7 @@ from app.db.models.company import Company
 from app.db.models.enrichment import JobAssessment, JobTranslation
 from app.db.models.job import Job
 from app.db.models.location import Location
+from app.config import get_settings
 from app.db.session import session_scope
 from app.repositories import enrichment as enrichment_repo
 from app.text import sanitize_description
@@ -59,6 +60,9 @@ def _job_row(job: Job, assessment: Optional[JobAssessment], translation: Optiona
         "verdict": assessment.verdict if assessment else None,
         "blocked": bool(assessment.blocked) if assessment else False,
         "dutch_required": bool(assessment.dutch_required) if assessment else False,
+        "sponsorship_required": bool(assessment.sponsorship_required) if assessment else False,
+        "stack_match": assessment.stack_match if assessment else None,
+        "seniority_fit": assessment.seniority_fit if assessment else None,
         "seniority": assessment.seniority if assessment else None,
         "remote": assessment.remote if assessment else None,
         "summary": assessment.summary if assessment else None,
@@ -70,8 +74,9 @@ def _job_row(job: Job, assessment: Optional[JobAssessment], translation: Optiona
 
 
 @router.get("/api/board")
-def board(profile: str = "default") -> dict[str, Any]:
+def board(profile: str | None = None) -> dict[str, Any]:
     """The whole enriched corpus plus headline stats, in one request."""
+    profile = profile or get_settings().llm_default_profile
     with session_scope() as session:
         rows = session.execute(
             select(Job, JobAssessment, JobTranslation)
@@ -111,18 +116,24 @@ def board(profile: str = "default") -> dict[str, Any]:
             "actionable": len(actionable),
             "blocked": sum(1 for r in jobs if r["blocked"]),
             "needs_dutch": sum(1 for r in jobs if r["dutch_required"]),
+        "needs_sponsorship": sum(1 for r in jobs if r["sponsorship_required"]),
+        "stack_tiers": {
+            tier: sum(1 for r in jobs if r["stack_match"] == tier)
+            for tier in ("core", "proficient", "familiar", "unrelated", "non_technical")
+        },
         },
         "facets": {
             "cities": sorted({r["city"] for r in jobs if r["city"]}),
             "companies": sorted({r["company"] for r in jobs if r["company"]}),
             "verdicts": ["strong_match", "possible", "weak", "irrelevant"],
             "seniorities": sorted({r["seniority"] for r in jobs if r["seniority"]}),
+            "stack_tiers": ["core", "proficient", "familiar", "unrelated", "non_technical"],
         },
     }
 
 
 @router.get("/api/jobs/{job_id}")
-def job_detail(job_id: int, profile: str = "default") -> dict[str, Any]:
+def job_detail(job_id: int, profile: str | None = None) -> dict[str, Any]:
     """One vacancy including both texts: the English translation and the original.
 
     The original is returned sanitised rather than raw, because that is what the
