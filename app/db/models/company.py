@@ -5,7 +5,9 @@ holds a pre-built search URL for that job board, so a consumer can jump straight
 to the employer's listings without re-deriving the query.
 """
 
-from sqlalchemy import Index, String, Text
+from datetime import datetime
+
+from sqlalchemy import DateTime, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin
@@ -35,6 +37,16 @@ class Company(Base, TimestampMixin):
     indeed_jobs_link: Mapped[str | None] = mapped_column(Text, nullable=True)
     glassdoor_jobs_link: Mapped[str | None] = mapped_column(Text, nullable=True)
     nationalevacaturebank_jobs_link: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # --- scrape bookkeeping ---
+    # When this employer's own job-board search was last run, and what it
+    # found. Stored on the company rather than derived from `jobs` because
+    # "we looked and found nothing" is different from "we never looked", and
+    # only a recorded timestamp can tell them apart.
+    last_scraped_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_scrape_vacancies: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     __table_args__ = (
         # Supports the common "filter employers by region" read pattern.

@@ -33,6 +33,7 @@ from app.llm.prompts import ASSESSMENT_PROMPT_VERSION, TRANSLATION_PROMPT_VERSIO
 from app.logging_setup import log
 from app.repositories import enrichment as enrichment_repo
 from app.repositories import job as job_repo
+from app.services.company_scrape import NoSearchQuery, query_for, record_scrape
 from app.text import sanitize_description
 
 # Queue names. The GPU queue's concurrency is the safety property of this module.
@@ -473,3 +474,130 @@ def scrape_and_enrich_workflow(
 def ingest_page_workflow(query: str, page: int, limit: int) -> dict:
     """Fetch and store one page. Enqueued on the ingest queue."""
     return store_page(fetch_page(query, page, limit))
+
+
+# ---------------------------------------------------------------------------
+# Per-company scrape
+# ---------------------------------------------------------------------------
+
+
+@DBOS.step()
+def company_search_query(company_id: int) -> dict:
+    """Read the employer's own job-board search term.
+
+    A step, so the query that was actually used is checkpointed: if the flow
+    resumes after the seed link is edited, it continues with the term it
+    started with rather than silently switching searches mid-run.
+    """
+    from app.db.models.company import Company
+
+    with session_scope() as session:
+        company = session.get(Company, company_id)
+        if company is None:
+            return {"found": False, "company_id": company_id}
+        try:
+            query = query_for(company)
+        except NoSearchQuery as error:
+            return {"found": True, "company_id": company_id, "query": None, "error": str(error)}
+        return {
+            "found": True,
+            "company_id": company_id,
+            "name": company.name,
+            "query": query,
+        }
+
+
+@DBOS.step()
+def stamp_scrape(company_id: int, vacancies: int) -> None:
+    """Record when this employer was last scraped, and what it yielded."""
+    with session_scope() as session:
+        record_scrape(session, company_id, vacancies=vacancies)
+
+
+@DBOS.workflow()
+def scrape_company_workflow(
+    company_id: int,
+    limit: int = 50,
+    max_pages: Optional[int] = None,
+    target_language: str = "en",
+    profile_name: str = "default",
+    enrich: bool = True,
+) -> dict:
+    """Scrape every page of one employer's search, then translate and grade.
+
+    Same flow as a manual query ingest - only the query differs, and it comes
+    from the employer's own Nationale Vacaturebank search link.
+
+    GPU safety: the vacancies found here are enriched by enqueueing one child
+    workflow each onto LLM_QUEUE, which allows a single job at a time across
+    every process. Triggering this for ten employers at once queues the work;
+    it does not run ten models.
+    """
+    resolved = company_search_query(company_id)
+    if not resolved["found"]:
+        return {"company_id": company_id, "status": "missing"}
+    if not resolved.get("query"):
+        return {"company_id": company_id, "status": "no_query", "error": resolved.get("error")}
+
+    query = resolved["query"]
+    log.info("company %s (%s): scraping query %r", company_id, resolved.get("name"), query)
+
+    # --- scrape every page ---
+    first = fetch_page(query, 1, limit)
+    total_pages = int(first.get("pages") or 1)
+    last_page = min(total_pages, max_pages) if max_pages else total_pages
+
+    stored = store_page(first)
+    job_ids = list(stored["job_ids"])
+    created, updated = stored["created"], stored["updated"]
+
+    page_handles = [
+        DBOS.enqueue_workflow(INGEST_QUEUE, ingest_page_workflow, query, page, limit)
+        for page in range(2, last_page + 1)
+    ]
+    for handle in page_handles:
+        result = handle.get_result()
+        job_ids.extend(result["job_ids"])
+        created += result["created"]
+        updated += result["updated"]
+
+    # Stamped before enrichment: the scrape itself is done at this point, and a
+    # later GPU failure should not make it look as though we never looked.
+    stamp_scrape(company_id, len(job_ids))
+
+    summary = {
+        "company_id": company_id,
+        "company": resolved.get("name"),
+        "query": query,
+        "status": "done",
+        "pages": last_page,
+        "vacancies": len(job_ids),
+        "created": created,
+        "updated": updated,
+    }
+
+    if not enrich or not job_ids:
+        summary["enriched"] = 0
+        return summary
+
+    # --- enrich, strictly one model at a time ---
+    handles = [
+        DBOS.enqueue_workflow(
+            LLM_QUEUE, enrich_job_workflow, job_id, target_language, profile_name, False
+        )
+        for job_id in dict.fromkeys(job_ids)
+    ]
+
+    enriched = failed = 0
+    for handle in handles:
+        try:
+            result = handle.get_result()
+            enriched += result.get("status") == "enriched"
+        except Exception as error:  # one vacancy must not sink the scrape
+            log.exception("company %s: enriching a vacancy failed: %s", company_id, error)
+            failed += 1
+
+    summary["enriched"] = enriched
+    summary["failed"] = failed
+    log.info("company scrape done: %s", summary)
+    return summary

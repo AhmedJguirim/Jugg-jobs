@@ -55,7 +55,7 @@ Supporting trees, outside the runtime path:
 | `app/db/models/` | ORM models; `__init__` is the registry Alembic reads |
 | `app/schemas/` | DTOs for companies and vacancies + normalisation |
 | `app/repositories/` | CRUD; raises domain errors, never commits |
-| `app/services/` | Flow layer: multi-step operations (paginating job ingest) |
+| `app/services/` | Flow layer: job ingest, per-company scrape query resolution |
 | `app/api/board.py` | Read-only HTTP API behind the job board view |
 | `app/api/companies.py` | Read-only HTTP API behind the employers browser |
 | `html/board.html` | The job board: Tailwind + Alpine, served at `/board` |
@@ -210,6 +210,24 @@ familiar.
 Eligibility never moves the score. `dutch_required`, `sponsorship_required`,
 `seniority_fit` and `blocked` are recorded beside it, so "a great role you
 cannot take" stays distinguishable from "a role in the wrong field".
+
+### Scraping one employer
+
+Every seed company carries a Nationale Vacaturebank search URL of the shape
+`?query=<urlencoded>`. `scrape_company_workflow` pulls that query out (falling
+back to the company name for employers discovered from a vacancy), walks every
+result page, then enriches what it found - the same flow as a manual ingest,
+only the query differs.
+
+`companies.last_scraped_at` and `last_scrape_vacancies` record the outcome. They
+are stamped **after the scrape but before enrichment**, because the scrape is
+genuinely finished at that point and a later GPU failure should not make it look
+as though we never looked. Storing the timestamp is what distinguishes "looked
+and found nothing" from "never looked" - a distinction `jobs` alone cannot make.
+
+The query is resolved in its own checkpointed step, so a flow that resumes after
+someone edits the seed link continues with the term it started with rather than
+silently switching searches mid-run.
 
 ## The GPU constraint
 

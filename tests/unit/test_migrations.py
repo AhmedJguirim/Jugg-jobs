@@ -57,6 +57,8 @@ def test_companies_table_exists_with_expected_columns(migrated_engine):
         "indeed_jobs_link",
         "glassdoor_jobs_link",
         "nationalevacaturebank_jobs_link",
+        "last_scraped_at",
+        "last_scrape_vacancies",
         "created_at",
         "updated_at",
     }

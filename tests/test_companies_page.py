@@ -200,3 +200,82 @@ class TestDetailDrawer:
         page_loaded.keyboard.press("Escape")
 
         expect(page_loaded.locator("text=Search this employer's jobs")).not_to_be_visible()
+
+
+class TestScraping:
+    """The per-employer scrape button and the endpoint behind it.
+
+    Enrichment is switched off in these tests: they check the wiring, not the
+    model, and a real grading pass would tie the suite to the GPU.
+    """
+
+    def test_scrape_returns_a_workflow_and_the_derived_query(
+        self, app_server: str, page: Page
+    ):
+        listed = page.request.get(f"{app_server}/api/companies?has_links=true&limit=1").json()
+        company = listed["items"][0]
+
+        response = page.request.post(
+            f"{app_server}/api/companies/{company['id']}/scrape",
+            data={"enrich": False, "limit": 25, "max_pages": 1},
+        )
+
+        assert response.ok
+        body = response.json()
+        assert body["workflow_id"]
+        # The query comes from the employer's own search link.
+        assert body["query"]
+
+    def test_scraping_an_unknown_company_is_a_404(self, app_server: str, page: Page):
+        response = page.request.post(
+            f"{app_server}/api/companies/99999999/scrape", data={"enrich": False}
+        )
+
+        assert response.status == 404
+
+    def test_scrape_records_the_timestamp(self, app_server: str, page: Page):
+        listed = page.request.get(f"{app_server}/api/companies?has_links=true&limit=1").json()
+        company_id = listed["items"][0]["id"]
+
+        started = page.request.post(
+            f"{app_server}/api/companies/{company_id}/scrape",
+            data={"enrich": False, "limit": 25, "max_pages": 1},
+        ).json()
+
+        # Poll until the workflow finishes, then the stamp must be set.
+        for _ in range(60):
+            status = page.request.get(
+                f"{app_server}/api/companies/scrape/{started['workflow_id']}"
+            ).json()
+            if status["status"] == "SUCCESS":
+                break
+            page.wait_for_timeout(1000)
+        else:
+            pytest.fail("scrape did not finish in time")
+
+        detail = page.request.get(f"{app_server}/api/companies/{company_id}").json()
+        assert detail["last_scraped_at"] is not None
+        assert detail["last_scrape_vacancies"] is not None
+
+    def test_listing_exposes_the_search_query_and_scrape_state(
+        self, app_server: str, page: Page
+    ):
+        item = page.request.get(f"{app_server}/api/companies?limit=1").json()["items"][0]
+
+        assert "search_query" in item
+        assert "last_scraped_at" in item
+        assert "last_scrape_vacancies" in item
+
+    def test_drawer_offers_the_scrape_button(self, page_loaded: Page):
+        page_loaded.locator("ul > li").first.click()
+
+        expect(page_loaded.get_by_role("button", name="Scrape vacancies")).to_be_visible()
+
+    def test_drawer_shows_the_query_that_will_be_searched(self, page_loaded: Page):
+        page_loaded.locator("ul > li").first.click()
+
+        expect(page_loaded.locator("text=on Nationale Vacaturebank")).to_be_visible()
+
+    def test_never_scraped_employers_say_so(self, page_loaded: Page):
+        """"Never looked" must be visibly different from "looked, found none"."""
+        expect(page_loaded.locator("text=never scraped").first).to_be_visible()

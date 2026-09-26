@@ -9,12 +9,15 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+from dbos import DBOS
 from fastapi import APIRouter, HTTPException, Query
 
 from app.config import get_settings
 from app.db.session import session_scope
 from app.repositories import company as company_repo
 from app.repositories.company import CompanyNotFound
+from app.services.company_scrape import query_for
+from app.workflows import enrichment as flow
 
 router = APIRouter(tags=["companies"])
 
@@ -52,6 +55,11 @@ def _company_row(company, vacancies: int, best_fit, latest) -> dict[str, Any]:
         "origin": SOURCE_SEED if links["google"] else SOURCE_VACANCY,
         "has_links": bool(links["google"]),
         "links": links,
+        # Scrape bookkeeping: "never looked" and "looked, found nothing" are
+        # different states, and only the timestamp distinguishes them.
+        "last_scraped_at": company.last_scraped_at.isoformat() if company.last_scraped_at else None,
+        "last_scrape_vacancies": company.last_scrape_vacancies,
+        "search_query": query_for(company) if (company.name or links["nationalevacaturebank"]) else None,
     }
 
 
@@ -152,3 +160,47 @@ def company_detail(company_id: int, profile: Optional[str] = None) -> dict[str, 
             }
         )
         return detail
+
+
+# ---- scraping one employer ----
+
+
+@router.post("/api/companies/{company_id}/scrape")
+def scrape_company(company_id: int, body: Optional[dict] = None) -> dict[str, Any]:
+    """Run this employer's own job-board search, then translate and grade.
+
+    Returns immediately with a workflow id; the work runs durably in the
+    background. Enrichment is queued one vacancy at a time on the `llm` queue,
+    so pressing this for several employers queues the work rather than starting
+    several models.
+    """
+    body = body or {}
+
+    with session_scope() as session:
+        try:
+            company = company_repo.get_or_404(session, company_id)
+        except CompanyNotFound as error:
+            raise HTTPException(status_code=404, detail="company not found") from error
+        query = query_for(company)
+        name = company.name
+
+    handle = DBOS.start_workflow(
+        flow.scrape_company_workflow,
+        company_id,
+        int(body.get("limit", 50)),
+        int(body["max_pages"]) if body.get("max_pages") else None,
+        body.get("target_language", "en"),
+        body.get("profile") or get_settings().llm_default_profile,
+        bool(body.get("enrich", True)),
+    )
+    return {"workflow_id": handle.workflow_id, "company": name, "query": query}
+
+
+@router.get("/api/companies/scrape/{workflow_id}")
+def scrape_status(workflow_id: str) -> dict[str, Any]:
+    """Poll a running company scrape."""
+    handle = DBOS.retrieve_workflow(workflow_id)
+    status = handle.get_status()
+    if status.status != "SUCCESS":
+        return {"status": status.status}
+    return {"status": status.status, "result": handle.get_result()}

@@ -92,7 +92,11 @@ See [`docs/architecture.md`](docs/architecture.md) for the design, and
    - <http://localhost:8000/board> - the job board: what the flows produced,
      sorted by fit, with English translations and dealbreaker flags
    - <http://localhost:8000/companies> - browse all tracked employers, their
-     vacancies, and their job-board search links
+     vacancies, and their job-board search links. Each employer has a
+     **Scrape vacancies** button that runs their own Nationale Vacaturebank
+     search through the full pipeline (all pages, then translate and grade).
+     Pressing it for several employers queues the work: enrichment still runs
+     one vacancy at a time on the `llm` queue.
    - <http://localhost:8000/> - the DBOS workflow demo page
 
 ## Testing

@@ -8,6 +8,7 @@ from app.workflows.enrichment import (
     ingest_page_workflow,
     register_queues,
     scrape_and_enrich_workflow,
+    scrape_company_workflow,
 )
 
 __all__ = [
@@ -18,4 +19,5 @@ __all__ = [
     "ingest_page_workflow",
     "register_queues",
     "scrape_and_enrich_workflow",
+    "scrape_company_workflow",
 ]
