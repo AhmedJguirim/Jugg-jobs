@@ -204,3 +204,28 @@ def scrape_status(workflow_id: str) -> dict[str, Any]:
     if status.status != "SUCCESS":
         return {"status": status.status}
     return {"status": status.status, "result": handle.get_result()}
+
+
+@router.post("/api/companies/scrape/{workflow_id}/cancel")
+def cancel_scrape(workflow_id: str) -> dict[str, Any]:
+    """Stop a running scrape and everything it queued.
+
+    `cancel_children=True` matters: the scrape's real cost is the enrichment
+    workflows it put on the `llm` queue, and cancelling only the parent would
+    leave those grinding through the GPU one by one.
+
+    Whatever was already stored stays stored. Pages are committed as they are
+    fetched, so cancelling keeps the vacancies found so far rather than
+    discarding the work.
+    """
+    # DBOS treats cancelling an unknown id as a no-op, so existence is checked
+    # first - otherwise a typo in a workflow id would look like a success.
+    try:
+        status = DBOS.retrieve_workflow(workflow_id).get_status()
+    except Exception as error:
+        raise HTTPException(status_code=404, detail="workflow not found") from error
+    if status is None:
+        raise HTTPException(status_code=404, detail="workflow not found")
+
+    DBOS.cancel_workflow(workflow_id, cancel_children=True)
+    return {"workflow_id": workflow_id, "status": "CANCELLED"}

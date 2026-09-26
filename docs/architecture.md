@@ -229,6 +229,21 @@ The query is resolved in its own checkpointed step, so a flow that resumes after
 someone edits the seed link continues with the term it started with rather than
 silently switching searches mid-run.
 
+**A scrape walks at most 20 pages.** The board searches full text, so an
+employer whose name contains a common word matches much of the site: "7
+Solutions" returns 287 vacancies over 12 pages, almost none of them that
+employer's. The cap bounds the time, bandwidth and GPU one click can cost, and
+the result reports `pages_available` and `truncated` so the UI can say the
+search was broader than we walked.
+
+**A running scrape can be cancelled** from the company drawer, which calls
+`DBOS.cancel_workflow(id, cancel_children=True)`. Cancelling children is the
+point: the expensive part is the enrichment workflows already on the `llm`
+queue, and cancelling only the parent would leave them grinding through the GPU.
+Measured on a real runaway: 287 of 298 children cancelled, the queue drained to
+zero and the GPU went idle. Whatever was stored before the cancel stays stored,
+because pages commit as they are fetched.
+
 ## The GPU constraint
 
 There is one GPU. All model work is enqueued on the `llm` queue, registered with

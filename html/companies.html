@@ -263,6 +263,14 @@
                     >
                       <span x-text="isScraping(selected.id) ? 'Scraping…' : 'Scrape vacancies'"></span>
                     </button>
+
+                    <button
+                      x-show="isScraping(selected.id)"
+                      @click="cancelScrape(selected.id)"
+                      class="px-3 py-2 text-sm rounded-md border border-danger/50 text-danger hover:bg-danger/10 transition"
+                    >
+                      Cancel
+                    </button>
                     <div class="text-xs text-fg-muted">
                       <div>
                         searches <code class="text-lily" x-text="selected.search_query || '—'"></code>
@@ -546,13 +554,27 @@
               });
               if (!response.ok) throw new Error(`HTTP ${response.status}`);
               const started = await response.json();
-              this.setScrape(company.id, { status: "searching…" });
+              this.setScrape(company.id, {
+                status: "searching…",
+                workflowId: started.workflow_id,
+              });
               await this.pollScrape(started.workflow_id, company.id);
             } catch (error) {
               this.setScrape(company.id, { error: true, status: "failed: " + error.message });
               this.playFailure();
             } finally {
               this.setScrape(company.id, { running: false });
+            }
+          },
+
+          async cancelScrape(companyId) {
+            const workflowId = this.scrapeOf(companyId).workflowId;
+            if (!workflowId) return;
+            this.setScrape(companyId, { status: "cancelling…", cancelled: true });
+            try {
+              await fetch(`/api/companies/scrape/${workflowId}/cancel`, { method: "POST" });
+            } catch (error) {
+              this.setScrape(companyId, { error: true, status: "could not cancel" });
             }
           },
 
@@ -565,6 +587,14 @@
               if (!response.ok) continue;
               const body = await response.json();
 
+              if (body.status === "CANCELLED" || this.scrapeOf(companyId).cancelled) {
+                this.setScrape(companyId, {
+                  status: "cancelled - what was already found is kept",
+                  cancelled: false,
+                });
+                await this.refreshCompany(companyId);
+                return;
+              }
               if (body.status === "ERROR") {
                 this.setScrape(companyId, { error: true, status: "failed - see the logs" });
                 this.playFailure();
@@ -582,7 +612,9 @@
                 return;
               }
               this.setScrape(companyId, {
-                status: r.vacancies + " found · " + r.created + " new",
+                status:
+                  r.vacancies + " found · " + r.created + " new" +
+                  (r.truncated ? ` (first ${r.pages} of ${r.pages_available} pages)` : ""),
               });
               this.playSuccess();
               await this.refreshCompany(companyId);

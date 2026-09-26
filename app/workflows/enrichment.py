@@ -44,6 +44,15 @@ INGEST_QUEUE = "job-ingest"
 LLM_CONCURRENCY = 1
 INGEST_WORKER_CONCURRENCY = 3
 
+# Hard ceiling on how many result pages one scrape will walk.
+#
+# The board's search is full-text over the whole vacancy, so an employer whose
+# name contains a common word matches half the site: "7 Solutions" returns 287
+# vacancies across 12 pages, almost none of them that employer's. The cap bounds
+# the damage in time, bandwidth and GPU. A caller may ask for fewer pages; it
+# cannot ask for more.
+MAX_PAGES_PER_SCRAPE = 20
+
 _queues_registered = False
 
 
@@ -551,7 +560,19 @@ def scrape_company_workflow(
     # --- scrape every page ---
     first = fetch_page(query, 1, limit)
     total_pages = int(first.get("pages") or 1)
-    last_page = min(total_pages, max_pages) if max_pages else total_pages
+
+    requested = min(total_pages, max_pages) if max_pages else total_pages
+    last_page = min(requested, MAX_PAGES_PER_SCRAPE)
+    truncated = last_page < total_pages
+    if truncated:
+        log.warning(
+            "company %s: query %r has %s pages; stopping at %s. A generic "
+            "employer name matches unrelated vacancies on a full-text search.",
+            company_id,
+            query,
+            total_pages,
+            last_page,
+        )
 
     stored = store_page(first)
     job_ids = list(stored["job_ids"])
@@ -577,6 +598,10 @@ def scrape_company_workflow(
         "query": query,
         "status": "done",
         "pages": last_page,
+        "pages_available": total_pages,
+        # Surfaced so the UI can say the search was broader than we walked,
+        # rather than implying the employer only has this many vacancies.
+        "truncated": truncated,
         "vacancies": len(job_ids),
         "created": created,
         "updated": updated,

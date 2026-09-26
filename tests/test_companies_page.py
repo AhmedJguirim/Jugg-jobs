@@ -425,3 +425,102 @@ class TestCompletionSound:
         listening.evaluate(f"{self.state(listening)}.loadSoundPreference()")
 
         assert listening.evaluate(f"{self.state(listening)}.soundEnabled") is True
+
+
+class TestPageCap:
+    """A scrape walks at most MAX_PAGES_PER_SCRAPE result pages.
+
+    The board searches full text, so an employer whose name contains a common
+    word matches much of the site: "7 Solutions" returns 287 vacancies across
+    12 pages at 25 per page, and 58 pages at 5 per page.
+    """
+
+    def test_the_cap_is_twenty(self):
+        from app.workflows.enrichment import MAX_PAGES_PER_SCRAPE
+
+        assert MAX_PAGES_PER_SCRAPE == 20
+
+    def test_a_broad_search_is_truncated(self, app_server: str, page: Page):
+        listed = page.request.get(f"{app_server}/api/companies?q=7 Solutions&limit=1").json()
+        if not listed["items"]:
+            pytest.skip("the 7 Solutions employer is not in this database")
+
+        started = page.request.post(
+            f"{app_server}/api/companies/{listed['items'][0]['id']}/scrape",
+            data={"enrich": False, "limit": 5},
+        ).json()
+
+        for _ in range(120):
+            status = page.request.get(
+                f"{app_server}/api/companies/scrape/{started['workflow_id']}"
+            ).json()
+            if status["status"] in ("SUCCESS", "ERROR"):
+                break
+            page.wait_for_timeout(1000)
+        else:
+            pytest.fail("scrape did not finish in time")
+
+        result = status["result"]
+        assert result["pages"] == 20
+        assert result["pages_available"] > 20
+        assert result["truncated"] is True
+
+    def test_a_normal_search_is_not_marked_truncated(self, app_server: str, page: Page):
+        listed = page.request.get(f"{app_server}/api/companies?has_links=true&limit=1").json()
+
+        started = page.request.post(
+            f"{app_server}/api/companies/{listed['items'][0]['id']}/scrape",
+            data={"enrich": False, "limit": 50},
+        ).json()
+
+        for _ in range(60):
+            status = page.request.get(
+                f"{app_server}/api/companies/scrape/{started['workflow_id']}"
+            ).json()
+            if status["status"] in ("SUCCESS", "ERROR"):
+                break
+            page.wait_for_timeout(1000)
+
+        assert status["result"]["truncated"] is False
+
+
+class TestCancelling:
+    def test_cancelling_an_unknown_workflow_is_a_404(self, app_server: str, page: Page):
+        response = page.request.post(
+            f"{app_server}/api/companies/scrape/not-a-real-workflow/cancel"
+        )
+
+        assert response.status == 404
+
+    def test_a_cancelled_scrape_reports_cancelled(self, app_server: str, page: Page):
+        listed = page.request.get(f"{app_server}/api/companies?q=7 Solutions&limit=1").json()
+        if not listed["items"]:
+            pytest.skip("the 7 Solutions employer is not in this database")
+
+        started = page.request.post(
+            f"{app_server}/api/companies/{listed['items'][0]['id']}/scrape",
+            data={"enrich": False, "limit": 5},
+        ).json()
+
+        page.request.post(
+            f"{app_server}/api/companies/scrape/{started['workflow_id']}/cancel"
+        )
+
+        for _ in range(30):
+            status = page.request.get(
+                f"{app_server}/api/companies/scrape/{started['workflow_id']}"
+            ).json()
+            if status["status"] == "CANCELLED":
+                break
+            page.wait_for_timeout(500)
+
+        assert status["status"] == "CANCELLED"
+
+    def test_the_cancel_button_is_in_the_drawer_only(self, page_loaded: Page):
+        """Cancelling is a deliberate act, so it lives in the detail view."""
+        assert page_loaded.locator('ul > li button:has-text("Cancel")').count() == 0
+
+        page_loaded.locator("ul > li h2").first.click()
+        expect(page_loaded.get_by_role("button", name="Scrape vacancies")).to_be_visible()
+        # Hidden until a scrape is actually running.
+        expect(page_loaded.get_by_role("button", name="Cancel")).not_to_be_visible()
