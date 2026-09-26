@@ -100,7 +100,9 @@ def main(argv: list[str] | None = None) -> int:
     config: DBOSConfig = {
         "name": "job-hunt-enrich",
         "system_database_url": os.environ.get("DBOS_SYSTEM_DATABASE_URL"),
-        "application_version": "0.1.0",
+        # Keep in step with main.py: see the note there on why this is bumped
+        # when a workflow's step sequence changes.
+        "application_version": "0.2.0",
     }
     DBOS(config=config)
     DBOS.launch()

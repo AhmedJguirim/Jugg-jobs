@@ -229,6 +229,18 @@ The query is resolved in its own checkpointed step, so a flow that resumes after
 someone edits the seed link continues with the term it started with rather than
 silently switching searches mid-run.
 
+**Three ceilings bound one click**: at most 20 pages walked, at most 50 new
+vacancies stored, and at most 50 vacancies handed to the GPU.
+
+The third is not implied by the second, which cost an afternoon to learn.
+Re-scraping an employer whose vacancies are all already stored adds nothing new,
+so the storage cap never fires - yet the scrape was still queueing every vacancy
+it saw for enrichment. Where most of those were untranslated, one click meant
+roughly 95 minutes of GPU. `select_for_enrichment` now asks the database which
+vacancies actually need work, takes at most 50, and reports the rest as
+deferred. It also avoids enqueueing hundreds of workflows that would each start
+only to discover there is nothing to do.
+
 **A scrape adds at most 50 new vacancies, and walks at most 20 pages.** The
 vacancy cap is the one that matters, because a *new* vacancy is what costs GPU
 time - an already-known one is re-seen constantly across searches and costs
@@ -268,6 +280,13 @@ concurrency 1.
 
 Page fetching is network-bound and runs on a separate `job-ingest` queue with
 `worker_concurrency=3`, so scraping is parallel while inference stays serial.
+
+**Bump `application_version` when a workflow's step sequence changes.** DBOS
+replays a recovered workflow against the current code and aborts with
+`DBOSUnexpectedStepError` if the recorded steps no longer line up. Inserting a
+step into the enrichment sequence while a scrape was mid-flight killed that
+scrape on the next restart. A new version leaves in-flight workflows to the old
+one rather than replaying them against code they were not started with.
 
 `register_queues()` must be called **after** `DBOS.launch()`: it writes the
 limits to the system database and raises if called earlier.

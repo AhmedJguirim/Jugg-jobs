@@ -61,6 +61,15 @@ MAX_PAGES_PER_SCRAPE = 20
 # pages bounds the crawl; counting new vacancies bounds the bill.
 MAX_NEW_VACANCIES_PER_SCRAPE = 50
 
+# Ceiling on how many vacancies one scrape will queue for the GPU.
+#
+# Separate from the storage cap, and learned the hard way: re-scraping an
+# employer whose vacancies are all already stored adds nothing new, so the
+# storage cap never fires - but the scrape still queued every vacancy it saw for
+# enrichment. On a 287-result query where most were not yet translated, that is
+# roughly 95 minutes of GPU from one click.
+MAX_ENRICHED_PER_SCRAPE = 50
+
 _queues_registered = False
 
 
@@ -550,6 +559,59 @@ def company_search_query(company_id: int) -> dict:
 
 
 @DBOS.step()
+def select_for_enrichment(
+    job_ids: list[int],
+    target_language: str,
+    profile_name: str,
+    limit: int,
+) -> dict:
+    """Narrow a scrape's vacancies to those that actually need the GPU.
+
+    Two reasons this is a query rather than "enqueue them all and let each one
+    work it out": a vacancy that is already current costs a workflow
+    round-trip to discover that, and hundreds of those are slow even when none
+    of them touch the model; and without a ceiling one click can commit the GPU
+    for hours.
+
+    Returns the ids to enrich, capped, plus what was left out.
+    """
+    from app.db.models.enrichment import JobAssessment, JobTranslation
+    from app.db.models.job import Job
+    from sqlalchemy import select
+
+    if not job_ids:
+        return {"ids": [], "needed": 0, "skipped_current": 0, "deferred": 0}
+
+    with session_scope() as session:
+        rows = session.execute(
+            select(Job.id, JobTranslation.id, JobAssessment.id)
+            .outerjoin(
+                JobTranslation,
+                (JobTranslation.job_id == Job.id)
+                & (JobTranslation.target_language == target_language)
+                & (JobTranslation.prompt_version == TRANSLATION_PROMPT_VERSION),
+            )
+            .outerjoin(
+                JobAssessment,
+                (JobAssessment.job_id == Job.id)
+                & (JobAssessment.profile_name == profile_name)
+                & (JobAssessment.prompt_version == ASSESSMENT_PROMPT_VERSION),
+            )
+            .where(Job.id.in_(job_ids), Job.description.is_not(None))
+        ).all()
+
+    needing = [job_id for job_id, translation, assessment in rows if not (translation and assessment)]
+    current = len(rows) - len(needing)
+
+    return {
+        "ids": needing[:limit],
+        "needed": len(needing),
+        "skipped_current": current,
+        "deferred": max(0, len(needing) - limit),
+    }
+
+
+@DBOS.step()
 def stamp_scrape(company_id: int, vacancies: int) -> None:
     """Record when this employer was last scraped, and what it yielded."""
     with session_scope() as session:
@@ -661,11 +723,32 @@ def scrape_company_workflow(
         return summary
 
     # --- enrich, strictly one model at a time ---
+    selection = select_for_enrichment(
+        list(dict.fromkeys(job_ids)),
+        target_language,
+        profile_name,
+        MAX_ENRICHED_PER_SCRAPE,
+    )
+    summary["enrich_needed"] = selection["needed"]
+    summary["enrich_skipped_current"] = selection["skipped_current"]
+    summary["enrich_deferred"] = selection["deferred"]
+    summary["hit_enrich_cap"] = selection["deferred"] > 0
+
+    if selection["deferred"]:
+        log.warning(
+            "company %s: %s vacancies need enrichment, queueing %s and leaving "
+            "%s for a later run.",
+            company_id,
+            selection["needed"],
+            len(selection["ids"]),
+            selection["deferred"],
+        )
+
     handles = [
         DBOS.enqueue_workflow(
             LLM_QUEUE, enrich_job_workflow, job_id, target_language, profile_name, False
         )
-        for job_id in dict.fromkeys(job_ids)
+        for job_id in selection["ids"]
     ]
 
     enriched = failed = 0

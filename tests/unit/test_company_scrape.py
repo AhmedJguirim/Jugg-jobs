@@ -206,3 +206,108 @@ class TestScrapeCaps:
 
         assert result["created"] == 4
         assert result["skipped"] == 0
+
+
+class TestEnrichmentSelection:
+    """What a scrape hands to the GPU.
+
+    The storage cap was not enough on its own: re-scraping an employer whose
+    vacancies are all already stored adds nothing new, so that cap never fires,
+    yet the scrape was still queueing every vacancy it saw. On a 287-result
+    query with most vacancies untranslated that is about 95 minutes of GPU from
+    one click.
+    """
+
+    @pytest.fixture
+    def scoped(self, session, monkeypatch):
+        from contextlib import contextmanager
+
+        from app.workflows import enrichment
+
+        @contextmanager
+        def test_scope():
+            yield session
+
+        monkeypatch.setattr(enrichment, "session_scope", test_scope)
+        return enrichment
+
+    def make_jobs(self, session, count: int) -> list[int]:
+        from app.repositories import job as job_repo
+        from app.schemas.job import JobCreate
+
+        ids = []
+        for index in range(count):
+            job = job_repo.create(
+                session,
+                JobCreate(
+                    external_id=f"sel-{index}",
+                    title=f"Job {index}",
+                    description="<p>tekst</p>",
+                ),
+            )
+            ids.append(job.id)
+        return ids
+
+    def test_unenriched_vacancies_are_selected(self, session, scoped):
+        ids = self.make_jobs(session, 3)
+
+        result = scoped.select_for_enrichment(ids, "en", "default", 50)
+
+        assert sorted(result["ids"]) == sorted(ids)
+        assert result["needed"] == 3
+        assert result["deferred"] == 0
+
+    def test_already_enriched_vacancies_are_skipped(self, session, scoped):
+        from app.repositories import enrichment as enrichment_repo
+        from app.llm.prompts import ASSESSMENT_PROMPT_VERSION, TRANSLATION_PROMPT_VERSION
+
+        ids = self.make_jobs(session, 3)
+        enrichment_repo.upsert_translation(
+            session,
+            job_id=ids[0],
+            source_hash="h",
+            prompt_version=TRANSLATION_PROMPT_VERSION,
+        )
+        enrichment_repo.upsert_assessment(
+            session,
+            job_id=ids[0],
+            source_hash="h",
+            prompt_version=ASSESSMENT_PROMPT_VERSION,
+            fit_score=50,
+            verdict="weak",
+        )
+
+        result = scoped.select_for_enrichment(ids, "en", "default", 50)
+
+        assert ids[0] not in result["ids"]
+        assert result["skipped_current"] == 1
+        assert result["needed"] == 2
+
+    def test_the_selection_is_capped(self, session, scoped):
+        ids = self.make_jobs(session, 8)
+
+        result = scoped.select_for_enrichment(ids, "en", "default", 3)
+
+        assert len(result["ids"]) == 3
+        assert result["needed"] == 8
+        assert result["deferred"] == 5
+
+    def test_the_cap_is_fifty(self):
+        from app.workflows.enrichment import MAX_ENRICHED_PER_SCRAPE
+
+        assert MAX_ENRICHED_PER_SCRAPE == 50
+
+    def test_no_vacancies_means_no_work(self, scoped):
+        result = scoped.select_for_enrichment([], "en", "default", 50)
+
+        assert result == {"ids": [], "needed": 0, "skipped_current": 0, "deferred": 0}
+
+    def test_vacancies_without_a_description_are_ignored(self, session, scoped):
+        from app.repositories import job as job_repo
+        from app.schemas.job import JobCreate
+
+        bare = job_repo.create(session, JobCreate(external_id="bare-sel", title="No body"))
+
+        result = scoped.select_for_enrichment([bare.id], "en", "default", 50)
+
+        assert result["ids"] == []
