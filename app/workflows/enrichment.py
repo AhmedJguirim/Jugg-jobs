@@ -227,6 +227,19 @@ def assess_step(prepared: dict, english_text: str, profile_name: str) -> dict:
 
 
 @DBOS.step()
+def persist_translation(job_id: int, translation: dict) -> dict:
+    """Store a translation as soon as it exists.
+
+    Written before grading starts, deliberately. Grading can fail (a small model
+    can emit unparseable JSON), and translating is the expensive half - roughly
+    15s of GPU against 5s. Persisting here means a grading failure costs only the
+    grading, and the next run skips straight to it because the translation is
+    already current.
+    """
+    return persist_enrichment(job_id, translation, None)
+
+
+@DBOS.step()
 def persist_enrichment(
     job_id: int,
     translation: Optional[dict],
@@ -310,6 +323,8 @@ def enrich_job_workflow(
     translation: Optional[dict] = None
     if force or prepared["needs_translation"]:
         translation = translate_step(prepared, target_language)
+        # Banked immediately: see persist_translation's docstring.
+        persist_translation(job_id, translation)
     english = (translation or {}).get("description") or prepared["existing_translation"]
 
     assessment: Optional[dict] = None
@@ -320,7 +335,8 @@ def enrich_job_workflow(
         log.info("enrich: job %s already current, GPU not used", job_id)
         return {"job_id": job_id, "status": "up_to_date"}
 
-    persist_enrichment(job_id, translation, assessment)
+    if assessment is not None:
+        persist_enrichment(job_id, None, assessment)
 
     gpu_ms = (translation or {}).get("duration_ms", 0) + (assessment or {}).get("duration_ms", 0)
     return {

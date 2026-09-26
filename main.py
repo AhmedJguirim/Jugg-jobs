@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 
 from app import logging_setup
+from app.api import board_router
 from app.db.session import session_scope
 from app.integrations.nvb import fetch_jobs_page, to_job_creates
 from app.integrations.nvb.schema import JobSearchResponse
@@ -30,6 +31,9 @@ config: DBOSConfig = {
     "conductor_key": os.environ.get("DBOS_CONDUCTOR_KEY"),
 }
 DBOS(config=config)
+
+# Read-only API behind the job board view (app/api/board.py).
+app.include_router(board_router)
 
 # Mirror DBOS/uvicorn logs into logs/dev.log alongside our own dev logger.
 logging_setup.attach("dbos", "uvicorn.error")
@@ -107,6 +111,13 @@ def get_last_completed_step(task_id: str):
 @app.post("/crash")
 def crash_application():
     os._exit(1)
+
+
+# This endpoint serves the job board: what the flows actually produced.
+@app.get("/board")
+def board_page():
+    with open(os.path.join("html", "board.html"), encoding="utf-8") as file:
+        return HTMLResponse(file.read())
 
 
 # This endpoint serves the HTML frontend.

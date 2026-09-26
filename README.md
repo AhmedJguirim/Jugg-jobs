@@ -80,7 +80,11 @@ See [`docs/architecture.md`](docs/architecture.md) for the design, and
    python main.py
    ```
 
-   Then visit <http://localhost:8000>.
+   Then visit:
+
+   - <http://localhost:8000/board> - the job board: what the flows produced,
+     sorted by fit, with English translations and dealbreaker flags
+   - <http://localhost:8000/> - the DBOS workflow demo page
 
 ## Testing
 
@@ -133,6 +137,8 @@ profiles/                   candidate profiles for scoring
 app/schemas/                pydantic DTOs (public contract)
 app/integrations/nvb/       Nationale Vacaturebank client + response models
 app/integrations/ollama/    local LLM client (the only GPU user)
+app/api/                    read-only HTTP API for the view
+html/board.html             job board view (Tailwind + Alpine)
 app/logging_setup.py        file logger for development
 alembic/                    migrations
 scripts/                    operational one-shots (company + job ingest)

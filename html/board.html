@@ -1,0 +1,581 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Job board - job-hunt</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      // Palette lifted from html/app.html so this page reads as part of the
+      // same application rather than a bolted-on dashboard.
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              ink: { DEFAULT: "#16181d", raised: "#1c1f25", border: "#3a3d44", code: "#0e1014" },
+              fg: { DEFAULT: "#d8d9dc", muted: "#a3a5aa" },
+              splice: "#c8f62e",
+              lily: "#9ab5e5",
+              cyan: "#44e3ee",
+              danger: "#dc5848",
+              warn: "#e5a82f",
+              ok: "#56a64b",
+            },
+            fontFamily: { sans: ['"Open Sans"', "system-ui", "sans-serif"] },
+          },
+        },
+      };
+    </script>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/alpinejs/3.14.9/cdn.min.js"></script>
+    <style>
+      [x-cloak] { display: none !important; }
+      /* Preserve the paragraph structure the sanitiser worked to keep. */
+      .prose-vacancy { white-space: pre-wrap; line-height: 1.65; }
+      ::-webkit-scrollbar { width: 10px; height: 10px; }
+      ::-webkit-scrollbar-track { background: #16181d; }
+      ::-webkit-scrollbar-thumb { background: #3a3d44; border-radius: 5px; }
+    </style>
+  </head>
+
+  <body class="bg-ink text-fg font-sans min-h-screen antialiased">
+    <div x-data="board()" x-init="load()" x-cloak class="max-w-[1400px] mx-auto px-4 sm:px-6 py-6">
+      <!-- ── Header ─────────────────────────────────────────────────── -->
+      <header class="mb-6">
+        <div class="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h1 class="text-2xl sm:text-3xl font-bold tracking-tight">
+              Job board
+              <span class="text-fg-muted font-normal text-base ml-1" x-text="`· profile: ${profile}`"></span>
+            </h1>
+            <p class="text-sm text-fg-muted mt-1">
+              Dutch vacancies scraped, translated and graded by a local model.
+            </p>
+          </div>
+          <div class="flex items-center gap-2">
+            <button
+              @click="load()"
+              :disabled="loading"
+              class="px-3 py-2 text-sm rounded-md border border-ink-border hover:border-splice/60 hover:text-splice transition disabled:opacity-40"
+            >
+              <span x-text="loading ? 'Loading…' : 'Refresh'"></span>
+            </button>
+            <a href="/" class="px-3 py-2 text-sm rounded-md border border-ink-border hover:border-lily/60 hover:text-lily transition">
+              Workflows
+            </a>
+          </div>
+        </div>
+      </header>
+
+      <!-- ── Error ──────────────────────────────────────────────────── -->
+      <div x-show="error" class="mb-6 rounded-lg border border-danger/50 bg-danger/10 px-4 py-3 text-sm">
+        <strong class="text-danger">Could not load the board.</strong>
+        <span x-text="error" class="text-fg-muted"></span>
+        <p class="text-fg-muted mt-1">Is the app running, and has the ingest been run yet?</p>
+      </div>
+
+      <!-- ── Stats ──────────────────────────────────────────────────── -->
+      <section class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
+        <template x-for="tile in tiles" :key="tile.label">
+          <div class="rounded-lg border border-ink-border bg-ink-raised px-4 py-3">
+            <div class="text-2xl font-bold tabular-nums" :class="tile.accent" x-text="tile.value"></div>
+            <div class="text-[11px] uppercase tracking-wider text-fg-muted mt-0.5" x-text="tile.label"></div>
+          </div>
+        </template>
+      </section>
+
+      <!-- Enrichment progress: visible while the GPU queue still has work. -->
+      <section
+        x-show="stats.translation_pending > 0 || stats.assessment_pending > 0"
+        class="mb-6 rounded-lg border border-ink-border bg-ink-raised px-4 py-3"
+      >
+        <div class="flex items-center justify-between text-sm mb-2">
+          <span class="font-semibold">Enrichment in progress</span>
+          <span class="text-fg-muted tabular-nums"
+                x-text="`${stats.assessed}/${stats.jobs_with_description} graded · ${stats.gpu_seconds_spent}s GPU`"></span>
+        </div>
+        <div class="h-1.5 rounded-full bg-ink-border overflow-hidden">
+          <div
+            class="h-full bg-splice transition-all duration-500"
+            :style="`width: ${pct(stats.assessed, stats.jobs_with_description)}%`"
+          ></div>
+        </div>
+        <p class="text-xs text-fg-muted mt-2">
+          One vacancy at a time — the <code class="text-lily">llm</code> queue is pinned to a single
+          GPU job. Refresh to see new results.
+        </p>
+      </section>
+
+      <!-- ── Filters ────────────────────────────────────────────────── -->
+      <section class="rounded-lg border border-ink-border bg-ink-raised p-4 mb-6">
+        <div class="grid gap-4 lg:grid-cols-[minmax(0,2fr)_repeat(3,minmax(0,1fr))]">
+          <div>
+            <label class="block text-[11px] uppercase tracking-wider text-fg-muted mb-1">Search</label>
+            <input
+              x-model.debounce.200ms="filters.q"
+              type="search"
+              placeholder="title, company, summary…"
+              class="w-full bg-ink border border-ink-border rounded-md px-3 py-2 text-sm placeholder:text-fg-muted/60 focus:outline-none focus:border-splice/70"
+            />
+          </div>
+          <div>
+            <label class="block text-[11px] uppercase tracking-wider text-fg-muted mb-1">
+              Min fit <span class="text-splice tabular-nums" x-text="filters.minScore"></span>
+            </label>
+            <input x-model.number="filters.minScore" type="range" min="0" max="100" step="5"
+                   class="w-full accent-splice mt-2" />
+          </div>
+          <div>
+            <label class="block text-[11px] uppercase tracking-wider text-fg-muted mb-1">City</label>
+            <select x-model="filters.city"
+                    class="w-full bg-ink border border-ink-border rounded-md px-3 py-2 text-sm focus:outline-none focus:border-splice/70">
+              <option value="">Anywhere</option>
+              <template x-for="city in facets.cities" :key="city">
+                <option :value="city" x-text="city"></option>
+              </template>
+            </select>
+          </div>
+          <div>
+            <label class="block text-[11px] uppercase tracking-wider text-fg-muted mb-1">Sort</label>
+            <select x-model="filters.sort"
+                    class="w-full bg-ink border border-ink-border rounded-md px-3 py-2 text-sm focus:outline-none focus:border-splice/70">
+              <option value="fit">Best fit</option>
+              <option value="posted">Most recent</option>
+              <option value="company">Company</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-x-5 gap-y-2 mt-4 text-sm">
+          <label class="flex items-center gap-2 cursor-pointer select-none">
+            <input type="checkbox" x-model="filters.includeBlocked" class="accent-splice" />
+            <span>Show blocked
+              <span class="text-fg-muted">(hit a dealbreaker)</span>
+            </span>
+          </label>
+          <label class="flex items-center gap-2 cursor-pointer select-none">
+            <input type="checkbox" x-model="filters.hideDutch" class="accent-splice" />
+            <span>Hide "Dutch required"</span>
+          </label>
+          <label class="flex items-center gap-2 cursor-pointer select-none">
+            <input type="checkbox" x-model="filters.onlyAssessed" class="accent-splice" />
+            <span>Only graded</span>
+          </label>
+          <button @click="reset()" class="ml-auto text-fg-muted hover:text-fg underline underline-offset-2">
+            Reset filters
+          </button>
+        </div>
+      </section>
+
+      <!-- ── Result count ───────────────────────────────────────────── -->
+      <div class="flex items-baseline justify-between mb-3">
+        <p class="text-sm text-fg-muted">
+          <span class="text-fg font-semibold tabular-nums" x-text="visible.length"></span>
+          <span x-text="visible.length === 1 ? ' vacancy' : ' vacancies'"></span>
+          <span x-show="visible.length !== jobs.length" x-text="` of ${jobs.length}`"></span>
+        </p>
+        <p class="text-xs text-fg-muted" x-show="jobs.length">
+          Scores rate the <em>role</em>; dealbreakers are flagged separately.
+        </p>
+      </div>
+
+      <!-- ── Empty states ───────────────────────────────────────────── -->
+      <div x-show="!loading && !jobs.length && !error"
+           class="rounded-lg border border-dashed border-ink-border px-6 py-12 text-center">
+        <p class="font-semibold">Nothing ingested yet.</p>
+        <p class="text-sm text-fg-muted mt-1">
+          Run <code class="text-splice">python scripts/ingest_jobs.py "Odido"</code>, then
+          <code class="text-splice">python scripts/enrich_jobs.py</code>.
+        </p>
+      </div>
+      <div x-show="!loading && jobs.length && !visible.length"
+           class="rounded-lg border border-dashed border-ink-border px-6 py-12 text-center">
+        <p class="font-semibold">No vacancy matches these filters.</p>
+        <button @click="reset()" class="text-sm text-splice underline underline-offset-2 mt-2">Reset them</button>
+      </div>
+
+      <!-- ── List ───────────────────────────────────────────────────── -->
+      <ul class="space-y-3">
+        <template x-for="job in visible" :key="job.id">
+          <li
+            @click="open(job)"
+            class="group rounded-lg border border-ink-border bg-ink-raised hover:border-splice/50 transition cursor-pointer"
+          >
+            <div class="flex gap-4 p-4">
+              <!-- score -->
+              <div class="shrink-0 w-14 text-center">
+                <div class="text-2xl font-bold tabular-nums leading-none" :class="scoreColor(job)"
+                     x-text="job.fit_score ?? '–'"></div>
+                <div class="text-[10px] uppercase tracking-wider text-fg-muted mt-1"
+                     x-text="job.assessed ? 'fit' : 'ungraded'"></div>
+              </div>
+
+              <!-- body -->
+              <div class="min-w-0 flex-1">
+                <div class="flex flex-wrap items-center gap-2">
+                  <h2 class="font-semibold truncate group-hover:text-splice transition" x-text="job.title"></h2>
+                  <span x-show="job.blocked"
+                        class="shrink-0 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border border-danger/50 text-danger">
+                    blocked
+                  </span>
+                  <span x-show="job.dutch_required"
+                        class="shrink-0 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border border-warn/50 text-warn">
+                    Dutch
+                  </span>
+                  <span x-show="job.verdict"
+                        class="shrink-0 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border"
+                        :class="verdictClass(job.verdict)"
+                        x-text="(job.verdict || '').replace('_', ' ')"></span>
+                </div>
+
+                <p class="text-sm text-fg-muted mt-1 flex flex-wrap gap-x-2 gap-y-0.5">
+                  <span x-text="job.company || 'unknown employer'" class="text-lily"></span>
+                  <span x-show="job.city">· <span x-text="job.city"></span></span>
+                  <span x-show="job.salary">· <span x-text="job.salary"></span></span>
+                  <span x-show="job.posted">· <span x-text="job.posted"></span></span>
+                </p>
+
+                <p x-show="job.summary" class="text-sm mt-2 line-clamp-2 text-fg/90" x-text="job.summary"></p>
+
+                <!-- The original title, when translation changed it. -->
+                <p x-show="job.retitled" class="text-xs text-fg-muted mt-1.5 italic truncate"
+                   x-text="`originally: ${job.title_original}`"></p>
+
+                <div x-show="job.red_flags.length" class="flex flex-wrap gap-1.5 mt-2">
+                  <template x-for="flag in job.red_flags.slice(0, 3)" :key="flag">
+                    <span class="text-[11px] px-1.5 py-0.5 rounded bg-danger/10 text-danger/90 border border-danger/25"
+                          x-text="flag"></span>
+                  </template>
+                </div>
+              </div>
+            </div>
+          </li>
+        </template>
+      </ul>
+
+      <!-- ── Detail drawer ──────────────────────────────────────────── -->
+      <div
+        x-show="selected"
+        x-transition.opacity
+        @click.self="close()"
+        @keydown.escape.window="close()"
+        class="fixed inset-0 z-40 bg-black/70 backdrop-blur-sm flex justify-end"
+      >
+        <aside
+          x-show="selected"
+          x-transition:enter="transition ease-out duration-200"
+          x-transition:enter-start="translate-x-full"
+          x-transition:enter-end="translate-x-0"
+          class="w-full max-w-3xl h-full bg-ink border-l border-ink-border overflow-y-auto"
+        >
+          <template x-if="selected">
+            <div>
+              <!-- drawer header -->
+              <div class="sticky top-0 bg-ink/95 backdrop-blur border-b border-ink-border px-5 py-4 z-10">
+                <div class="flex items-start gap-3">
+                  <div class="min-w-0 flex-1">
+                    <h2 class="text-lg font-bold" x-text="selected.title"></h2>
+                    <p class="text-sm text-fg-muted mt-0.5">
+                      <span class="text-lily" x-text="selected.company || 'unknown employer'"></span>
+                      <span x-show="selected.city"> · <span x-text="selected.city"></span></span>
+                      <span x-show="selected.province"> (<span x-text="selected.province"></span>)</span>
+                    </p>
+                  </div>
+                  <div class="text-right shrink-0">
+                    <div class="text-3xl font-bold tabular-nums leading-none" :class="scoreColor(selected)"
+                         x-text="selected.fit_score ?? '–'"></div>
+                    <div class="text-[10px] uppercase tracking-wider text-fg-muted" x-text="(selected.verdict||'').replace('_',' ')"></div>
+                  </div>
+                  <button @click="close()" class="shrink-0 text-fg-muted hover:text-fg text-2xl leading-none px-1">&times;</button>
+                </div>
+
+                <div class="flex flex-wrap gap-2 mt-3">
+                  <a x-show="selected.url" :href="selected.url" target="_blank" rel="noopener"
+                     class="px-3 py-1.5 text-sm rounded-md bg-splice/15 border border-splice/50 text-splice hover:bg-splice/25 transition">
+                    Open vacancy ↗
+                  </a>
+                  <a x-show="selected.apply_url" :href="selected.apply_url" target="_blank" rel="noopener"
+                     class="px-3 py-1.5 text-sm rounded-md border border-ink-border hover:border-lily/60 hover:text-lily transition">
+                    Apply ↗
+                  </a>
+                  <button @click="tab = tab === 'original' ? 'english' : 'original'"
+                          class="px-3 py-1.5 text-sm rounded-md border border-ink-border hover:border-cyan/60 hover:text-cyan transition"
+                          x-text="tab === 'english' ? 'Show Dutch original' : 'Show English'"></button>
+                </div>
+              </div>
+
+              <div class="px-5 py-5 space-y-6">
+                <!-- facts -->
+                <dl class="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
+                  <template x-for="fact in facts(selected)" :key="fact.label">
+                    <div class="rounded-md border border-ink-border bg-ink-raised px-3 py-2">
+                      <dt class="text-[10px] uppercase tracking-wider text-fg-muted" x-text="fact.label"></dt>
+                      <dd class="mt-0.5 break-words" x-text="fact.value"></dd>
+                    </div>
+                  </template>
+                </dl>
+
+                <!-- verdict -->
+                <section x-show="selected.assessed">
+                  <h3 class="text-[11px] uppercase tracking-wider text-fg-muted mb-2">Assessment</h3>
+                  <p class="text-sm" x-text="selected.summary"></p>
+                  <p class="text-sm text-fg-muted mt-2 italic" x-text="selected.reasoning"></p>
+
+                  <div class="grid sm:grid-cols-2 gap-4 mt-4">
+                    <div x-show="selected.matched.length">
+                      <h4 class="text-xs font-semibold text-ok mb-1.5">Matches your profile</h4>
+                      <ul class="space-y-1 text-sm">
+                        <template x-for="item in selected.matched" :key="item">
+                          <li class="flex gap-1.5"><span class="text-ok">✓</span><span x-text="item"></span></li>
+                        </template>
+                      </ul>
+                    </div>
+                    <div x-show="selected.missing.length">
+                      <h4 class="text-xs font-semibold text-warn mb-1.5">Gaps</h4>
+                      <ul class="space-y-1 text-sm">
+                        <template x-for="item in selected.missing" :key="item">
+                          <li class="flex gap-1.5"><span class="text-warn">–</span><span x-text="item"></span></li>
+                        </template>
+                      </ul>
+                    </div>
+                  </div>
+
+                  <div x-show="selected.red_flags.length" class="mt-4">
+                    <h4 class="text-xs font-semibold text-danger mb-1.5">Red flags</h4>
+                    <ul class="space-y-1 text-sm">
+                      <template x-for="flag in selected.red_flags" :key="flag">
+                        <li class="flex gap-1.5"><span class="text-danger">!</span><span x-text="flag"></span></li>
+                      </template>
+                    </ul>
+                  </div>
+                </section>
+
+                <!-- text -->
+                <section>
+                  <div class="flex items-baseline justify-between mb-2">
+                    <h3 class="text-[11px] uppercase tracking-wider text-fg-muted"
+                        x-text="tab === 'english' ? 'Description (English)' : 'Description (original, as the model read it)'"></h3>
+                    <span x-show="detailLoading" class="text-xs text-fg-muted">loading…</span>
+                  </div>
+                  <div x-show="tab === 'english'">
+                    <p x-show="!selected.description_en && !detailLoading" class="text-sm text-fg-muted italic">
+                      Not translated yet — it is still in the GPU queue.
+                    </p>
+                    <div class="prose-vacancy text-sm text-fg/90" x-text="selected.description_en"></div>
+                  </div>
+                  <div x-show="tab === 'original'" class="prose-vacancy text-sm text-fg-muted"
+                       x-text="selected.description_original"></div>
+                </section>
+
+                <!-- provenance -->
+                <section x-show="selected.model" class="border-t border-ink-border pt-4">
+                  <h3 class="text-[11px] uppercase tracking-wider text-fg-muted mb-2">How this was produced</h3>
+                  <p class="text-xs text-fg-muted">
+                    Model <code class="text-lily" x-text="selected.model"></code> ·
+                    <span x-text="`${selected.gpu_seconds}s GPU`"></span> ·
+                    <span x-text="`${selected.chunks} translation chunk(s)`"></span> ·
+                    sanitised <span x-text="`${selected.original_chars} → ${selected.clean_chars} chars`"></span>
+                  </p>
+                </section>
+              </div>
+            </div>
+          </template>
+        </aside>
+      </div>
+    </div>
+
+    <script>
+      // The API's controlled vocabularies come back in Dutch. They are small,
+      // closed sets, so a static glossary beats another model call - and the
+      // point of this page is that you do not have to read Dutch.
+      const DUTCH_TERMS = {
+        // contract types
+        Vast: "Permanent",
+        Tijdelijk: "Temporary",
+        Freelance: "Freelance",
+        Vrijwilliger: "Volunteer",
+        Stage: "Internship",
+        Vakantiewerk: "Holiday work",
+        // career levels
+        Ervaren: "Experienced",
+        Starter: "Entry level",
+        // education levels: Dutch qualifications with no English equivalent,
+        // so they are annotated rather than translated.
+        WO: "WO (university)",
+        HBO: "HBO (university of applied sciences)",
+        MBO: "MBO (vocational)",
+        "VMBO/MAVO": "VMBO/MAVO (pre-vocational)",
+        "Lagere school": "Primary school",
+        // categories
+        "Automatisering/Internet": "IT & Internet",
+        "Medisch/Zorg": "Medical & Care",
+        "Administratief/Secretarieel": "Administrative",
+        "Commercieel/Verkoop": "Commercial & Sales",
+        "Design/Creatie/Journalistiek": "Design & Media",
+        "Productie/Uitvoerend": "Production",
+        Techniek: "Engineering",
+        Overig: "Other",
+        // language codes
+        nl: "Dutch",
+        en: "English",
+        unknown: "undetermined",
+      };
+
+      function en(term) {
+        return DUTCH_TERMS[term] || term;
+      }
+
+      function enList(terms) {
+        return (terms || []).map(en).join(", ");
+      }
+
+      function board() {
+        return {
+          jobs: [],
+          stats: {},
+          facets: { cities: [], companies: [], verdicts: [], seniorities: [] },
+          profile: "default",
+          loading: true,
+          error: "",
+          selected: null,
+          detailLoading: false,
+          tab: "english",
+          filters: {
+            q: "",
+            minScore: 0,
+            city: "",
+            sort: "fit",
+            includeBlocked: true,
+            hideDutch: false,
+            onlyAssessed: false,
+          },
+
+          async load() {
+            this.loading = true;
+            this.error = "";
+            try {
+              const response = await fetch("/api/board");
+              if (!response.ok) throw new Error(`HTTP ${response.status}`);
+              const data = await response.json();
+              this.jobs = data.jobs;
+              this.stats = data.stats;
+              this.facets = data.facets;
+              this.profile = data.profile;
+            } catch (error) {
+              this.error = error.message;
+            } finally {
+              this.loading = false;
+            }
+          },
+
+          get tiles() {
+            const s = this.stats;
+            return [
+              { label: "vacancies", value: s.total_jobs ?? 0, accent: "" },
+              { label: "worth a look", value: s.actionable ?? 0, accent: "text-splice" },
+              { label: "blocked", value: s.blocked ?? 0, accent: "text-danger" },
+              { label: "need Dutch", value: s.needs_dutch ?? 0, accent: "text-warn" },
+              { label: "employers", value: s.companies ?? 0, accent: "text-lily" },
+              { label: "GPU seconds", value: Math.round(s.gpu_seconds_spent ?? 0), accent: "text-cyan" },
+            ];
+          },
+
+          get visible() {
+            const f = this.filters;
+            const needle = f.q.trim().toLowerCase();
+            let rows = this.jobs.filter((job) => {
+              if (f.onlyAssessed && !job.assessed) return false;
+              if (!f.includeBlocked && job.blocked) return false;
+              if (f.hideDutch && job.dutch_required) return false;
+              if (f.city && job.city !== f.city) return false;
+              // Ungraded vacancies have no score; only filter them out once the
+              // threshold is actually raised above zero.
+              if (f.minScore > 0 && (job.fit_score ?? -1) < f.minScore) return false;
+              if (needle) {
+                const haystack = [job.title, job.title_original, job.company, job.summary, job.city]
+                  .filter(Boolean).join(" ").toLowerCase();
+                if (!haystack.includes(needle)) return false;
+              }
+              return true;
+            });
+
+            const by = {
+              fit: (a, b) => (b.fit_score ?? -1) - (a.fit_score ?? -1),
+              posted: (a, b) => (b.posted || "").localeCompare(a.posted || ""),
+              company: (a, b) => (a.company || "").localeCompare(b.company || ""),
+            }[f.sort];
+            return rows.sort(by);
+          },
+
+          async open(job) {
+            // Show the list row immediately, then fill in the long text.
+            this.selected = { ...job, description_en: null, description_original: "" };
+            this.tab = "english";
+            this.detailLoading = true;
+            try {
+              const response = await fetch(`/api/jobs/${job.id}`);
+              if (response.ok) this.selected = await response.json();
+            } finally {
+              this.detailLoading = false;
+            }
+          },
+
+          close() {
+            this.selected = null;
+          },
+
+          reset() {
+            this.filters = {
+              q: "", minScore: 0, city: "", sort: "fit",
+              includeBlocked: true, hideDutch: false, onlyAssessed: false,
+            };
+          },
+
+          pct(done, total) {
+            if (!total) return 0;
+            return Math.round((done / total) * 100);
+          },
+
+          scoreColor(job) {
+            const score = job.fit_score;
+            if (score === null || score === undefined) return "text-fg-muted";
+            if (score >= 80) return "text-splice";
+            if (score >= 55) return "text-cyan";
+            if (score >= 25) return "text-warn";
+            return "text-fg-muted";
+          },
+
+          verdictClass(verdict) {
+            return {
+              strong_match: "border-splice/50 text-splice",
+              possible: "border-cyan/50 text-cyan",
+              weak: "border-warn/50 text-warn",
+              irrelevant: "border-ink-border text-fg-muted",
+            }[verdict] || "border-ink-border text-fg-muted";
+          },
+
+          facts(job) {
+            return [
+              { label: "seniority", value: job.seniority || "unknown" },
+              { label: "work setup", value: job.remote || "unknown" },
+              { label: "salary", value: job.salary || "not stated" },
+              { label: "hours", value: job.hours || "not stated" },
+              { label: "contract", value: enList(job.contract) || "not stated" },
+              { label: "education", value: enList(job.education) || "not stated" },
+              { label: "classified as", value: job.dco_title || "unclassified" },
+              { label: "field", value: enList(job.categories) || "unclassified" },
+              { label: "career level", value: en(job.career_level) || "not stated" },
+              { label: "posted", value: job.posted || "unknown" },
+              { label: "source language", value: en(job.source_language) || "unknown" },
+            ];
+          },
+        };
+      }
+    </script>
+  </body>
+</html>

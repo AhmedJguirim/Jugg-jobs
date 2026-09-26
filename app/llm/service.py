@@ -252,7 +252,10 @@ def assess_job(
         temperature=0.1,
         think=False,
         json_format=True,
-        num_predict=700,
+        # Generous: a verbose assessment truncated at 700 tokens produced
+        # unparseable JSON on one real vacancy, and the repair inherited the same
+        # cap and truncated in turn.
+        num_predict=1400,
     )
 
     repaired = False
@@ -266,7 +269,7 @@ def assess_job(
             temperature=0.0,
             think=False,
             json_format=True,
-            num_predict=700,
+            num_predict=1400,
         )
         data = _parse_assessment(repair.content)
         repaired = True

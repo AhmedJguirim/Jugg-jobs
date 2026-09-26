@@ -56,6 +56,8 @@ Supporting trees, outside the runtime path:
 | `app/schemas/` | DTOs for companies and vacancies + normalisation |
 | `app/repositories/` | CRUD; raises domain errors, never commits |
 | `app/services/` | Flow layer: multi-step operations (paginating job ingest) |
+| `app/api/board.py` | Read-only HTTP API behind the job board view |
+| `html/board.html` | The job board: Tailwind + Alpine, served at `/board` |
 | `app/workflows/` | DBOS workflows/steps; registers the `llm` and `job-ingest` queues |
 | `app/llm/` | Versioned prompts, candidate profiles, translation and grading |
 | `app/text/` | HTML sanitising, language detection, chunking, content hashing |
@@ -147,6 +149,27 @@ iteration (a new version re-runs only older rows).
 So a Python role requiring fluent Dutch scores 85 *and* `blocked=true` - "a great
 job you cannot take", which is different and more useful than a low score. The
 shortlist hides blocked rows by default. See ADR-0007.
+
+## The view
+
+`/board` renders what the flows produced: every vacancy with its English title
+and summary, its fit score, and the dealbreakers that block it. Tailwind and
+Alpine come from CDNs and the page is a single static file - no build step, which
+keeps it consistent with the existing `html/app.html`.
+
+Two endpoints back it:
+
+- `GET /api/board` - the whole corpus without the long description bodies, small
+  enough (68 rows) for the page to filter and sort client-side with no round
+  trips, plus headline stats and facet values.
+- `GET /api/jobs/{id}` - one vacancy including both texts: the English
+  translation and the *sanitised* original, which is what the model actually
+  read, so a suspect translation can be checked against its input.
+
+The page also carries a static glossary for the API's Dutch controlled
+vocabularies (`Vast` -> Permanent, `Ervaren` -> Experienced, HBO/MBO annotated).
+They are closed sets of five values, so a lookup is cheaper and more reliable
+than a model call - and the point of the page is not having to read Dutch.
 
 ## The GPU constraint
 
