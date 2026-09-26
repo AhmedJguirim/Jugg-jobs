@@ -68,6 +68,13 @@ See [`docs/architecture.md`](docs/architecture.md) for the design, and
    python scripts/enrich_jobs.py --shortlist     # the best matches, in English
    ```
 
+   Vacancies are scored against `profiles/<name>.json`, selected by
+   `LLM_DEFAULT_PROFILE`. Skills are tiered (`core` / `proficient` / `familiar`)
+   and the tier fixes the score band, so a role on your daily stack cannot be
+   outranked by one in a language you have only touched. Eligibility (Dutch,
+   visa sponsorship, seniority gap) is flagged separately and never lowers the
+   score - see `docs/adr/0008`.
+
    **One GPU job at a time.** All model work goes through the DBOS `llm` queue,
    registered with `worker_concurrency=1` and `global_concurrency=1`. The second
    limit is enforced in the database, so even starting this twice cannot put two

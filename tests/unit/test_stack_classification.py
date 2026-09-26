@@ -100,7 +100,10 @@ class TestWeighting:
         assert tier == "core"
 
     def test_ties_break_towards_the_stronger_tier(self, profile):
-        tier, _ = classify_stack("Developer", "We use PHP and Python equally.", profile)
+        """Both tiers clear the evidence floor with two skills each."""
+        tier, _ = classify_stack(
+            "Developer", "We use PHP and Laravel, and also Python and Java.", profile
+        )
 
         assert tier == "core"
 
@@ -123,9 +126,57 @@ class TestWordBoundaries:
         assert tier == "core"
 
     def test_multi_word_skills_match(self, profile):
-        _, hits = classify_stack("Developer", "We use Ruby on Rails here", profile)
+        _, hits = classify_stack("Ruby on Rails Developer", "Build web apps", profile)
 
         assert "Ruby on Rails" in hits
+
+
+class TestEvidenceThreshold:
+    """One passing mention must not pull a vacancy into a skill band."""
+
+    def test_single_incidental_mention_does_not_claim_the_vacancy(self, profile):
+        """The real case: a GIS role naming PostgreSQL once scored 55."""
+        tier, _ = classify_stack(
+            "GIS Specialist",
+            "Experience with spatial databases, such as PostgreSQL/PostGIS.",
+            profile,
+        )
+
+        assert tier != "proficient"
+
+    def test_a_single_framework_mention_is_enough(self, profile):
+        """Naming Laravel once identifies the stack, even in a generic title."""
+        tier, hits = classify_stack(
+            "Senior Full Stack Developer", "Our backend runs on Laravel.", profile
+        )
+
+        assert tier == "core"
+        assert hits == ["Laravel"]
+
+    def test_a_single_database_mention_is_not_enough(self, profile):
+        """Nearly every technical advert names a database; it identifies nothing."""
+        tier, _ = classify_stack(
+            "GIS Specialist", "Spatial databases such as PostgreSQL/PostGIS.", profile
+        )
+
+        assert tier == "unrelated"
+
+    def test_two_distinct_body_skills_are_enough(self, profile):
+        tier, _ = classify_stack("Developer", "We use PHP with MySQL.", profile)
+
+        assert tier == "core"
+
+    def test_one_skill_repeated_often_is_enough(self, profile):
+        tier, _ = classify_stack(
+            "Developer", "Laravel work: Laravel upgrades and Laravel packages.", profile
+        )
+
+        assert tier == "core"
+
+    def test_a_title_hit_alone_is_enough(self, profile):
+        tier, _ = classify_stack("Laravel Developer", "No other details.", profile)
+
+        assert tier == "core"
 
 
 class TestEdgeCases:

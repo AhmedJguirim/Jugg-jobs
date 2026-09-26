@@ -134,6 +134,22 @@ _BODY_SKILL_WEIGHT = 2
 _REPEAT_WEIGHT = 0.5
 _MAX_REPEATS = 4
 
+# Supporting technologies: databases, version control, containers, API clients.
+# These say little about a vacancy's stack because nearly every technical advert
+# names one, so they count as weak evidence. Naming *Laravel* once identifies
+# the stack; naming *PostgreSQL* once does not - a "GIS Specialist" role
+# mentioning PostgreSQL among its spatial-database requirements was landing in
+# the proficient band (55) purely on that.
+_SUPPORTING_TECH = {
+    "mysql", "postgresql", "mongodb", "redis", "git", "docker", "postman",
+    "sql", "rest apis", "background jobs and queues", "linux", "ci/cd",
+}
+_SUPPORTING_FACTOR = 0.25
+
+# Evidence a tier needs before it can claim the vacancy. One primary technology
+# (2.0) clears it; one supporting technology (0.5) does not.
+_MIN_EVIDENCE = 2.0
+
 
 def _count(text: str, skill: str) -> int:
     pattern = r"\b" + re.escape(skill) + r"\b"
@@ -158,6 +174,10 @@ def classify_stack(
     far more than one buried in the body, and repeated mentions count for a
     little more than a single aside.
 
+    A tier must also clear `_MIN_EVIDENCE` to win at all, and supporting
+    technologies (databases, Git, Docker) count for a quarter, so a lone
+    incidental mention does not pull an unrelated vacancy into a skill band.
+
     Returns the winning tier and the skills that matched it.
     """
     title = title or ""
@@ -180,11 +200,13 @@ def classify_stack(
             if not in_title and not in_body:
                 continue
             matched.append(skill)
-            score += in_title * _TITLE_WEIGHT
+            weight = _SUPPORTING_FACTOR if skill.lower() in _SUPPORTING_TECH else 1.0
+            score += in_title * _TITLE_WEIGHT * weight
             if in_body:
-                score += _BODY_SKILL_WEIGHT
-                score += min(in_body - 1, _MAX_REPEATS) * _REPEAT_WEIGHT
-        if matched:
+                score += _BODY_SKILL_WEIGHT * weight
+                score += min(in_body - 1, _MAX_REPEATS) * _REPEAT_WEIGHT * weight
+        # Below the evidence floor the mention is treated as incidental.
+        if matched and score >= _MIN_EVIDENCE:
             scores[tier] = score
             hits[tier] = matched
 

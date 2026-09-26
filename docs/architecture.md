@@ -60,6 +60,7 @@ Supporting trees, outside the runtime path:
 | `html/board.html` | The job board: Tailwind + Alpine, served at `/board` |
 | `app/workflows/` | DBOS workflows/steps; registers the `llm` and `job-ingest` queues |
 | `app/llm/` | Versioned prompts, candidate profiles, translation and grading |
+| `profiles/*.json` | Tiered candidate profiles; `LLM_DEFAULT_PROFILE` picks one |
 | `app/text/` | HTML sanitising, language detection, chunking, content hashing |
 | `app/integrations/ollama/` | The only code that occupies the GPU |
 | `app/integrations/nvb/` | NVB client (`client.py`), models (`schema.py`), mapper (`mapper.py`) |
@@ -170,6 +171,29 @@ The page also carries a static glossary for the API's Dutch controlled
 vocabularies (`Vast` -> Permanent, `Ervaren` -> Experienced, HBO/MBO annotated).
 They are closed sets of five values, so a lookup is cheaper and more reliable
 than a model call - and the point of the page is not having to read Dutch.
+
+## How a vacancy is graded
+
+Scoring is split between code and model, deliberately (ADR-0008):
+
+```
+  classify_stack()            <- code: which skill tier is this vacancy's stack?
+        |                        weighted keyword match, title weighs 10x body
+        v
+  band = STACK_BANDS[tier]    <- core 75-95 | proficient 55-75 | familiar 30-55
+        |                        unrelated 10-30 | non_technical 0-10
+        v
+  model scores inside the band, and the result is clamped into it
+```
+
+The tier is a lookup, so it is computed exactly; the model is left with the
+judgement call. This came from a failure: asked to pick the tier itself, a 4B
+kept calling a Python vacancy "unrelated" on a profile that lists Python under
+familiar.
+
+Eligibility never moves the score. `dutch_required`, `sponsorship_required`,
+`seniority_fit` and `blocked` are recorded beside it, so "a great role you
+cannot take" stays distinguishable from "a role in the wrong field".
 
 ## The GPU constraint
 
