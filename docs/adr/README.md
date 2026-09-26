@@ -15,3 +15,4 @@ Consequences (what this costs us, including what it rules out).
 | [0004](0004-testing-against-real-postgres.md) | Test against real PostgreSQL with rollback isolation | Accepted |
 | [0005](0005-command-audit-log.md) | Append-only command audit log for agent work | Accepted |
 | [0006](0006-job-schema-normalisation.md) | Vacancy schema: what gets its own table | Accepted |
+| [0007](0007-local-llm-enrichment.md) | Local LLM enrichment on a single GPU | Accepted |

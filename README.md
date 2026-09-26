@@ -56,7 +56,25 @@ See [`docs/architecture.md`](docs/architecture.md) for the design, and
    Safe to re-run: vacancies are keyed on `(source, external_id)`, so a second
    run updates rather than duplicates.
 
-6. **Run**
+6. **Translate and grade them on your local LLM**
+
+   Needs Ollama running with the model pulled (`ollama pull qwen3.5:4b`).
+
+   ```shell
+   python scripts/enrich_jobs.py                 # everything pending
+   python scripts/enrich_jobs.py --limit 5       # a few, to try it out
+   python scripts/enrich_jobs.py --job-id 42     # one vacancy
+   python scripts/enrich_jobs.py --progress      # how far along, GPU time spent
+   python scripts/enrich_jobs.py --shortlist     # the best matches, in English
+   ```
+
+   **One GPU job at a time.** All model work goes through the DBOS `llm` queue,
+   registered with `worker_concurrency=1` and `global_concurrency=1`. The second
+   limit is enforced in the database, so even starting this twice cannot put two
+   models on your GPU. Edit `profiles/default.json` first - it is what every
+   vacancy is scored against.
+
+7. **Run**
 
    ```shell
    python main.py
@@ -108,8 +126,13 @@ app/config.py               settings from env/.env
 app/db/                     engine, session, models, base
 app/repositories/           CRUD; all SQL lives here
 app/services/               flows (paginating job ingest)
+app/workflows/              DBOS workflows + queue registration (GPU serialised)
+app/llm/                    prompts, profiles, translation, grading
+app/text/                   HTML sanitising, language detection, chunking
+profiles/                   candidate profiles for scoring
 app/schemas/                pydantic DTOs (public contract)
 app/integrations/nvb/       Nationale Vacaturebank client + response models
+app/integrations/ollama/    local LLM client (the only GPU user)
 app/logging_setup.py        file logger for development
 alembic/                    migrations
 scripts/                    operational one-shots (company + job ingest)

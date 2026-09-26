@@ -18,11 +18,14 @@ never the reverse.
   main.py                    entrypoint: FastAPI routes + DBOS workflow wiring
       |
       v
+  app/workflows/             DBOS workflows, steps and queue registration
   app/services/              flows: order multiple repository/client calls
   app/repositories/          all SQL for a table; returns ORM objects
   app/integrations/          outbound HTTP clients + their response models
       |
       v
+  app/llm/                   prompts, candidate profiles, translate + grade
+  app/text/                  HTML sanitising, language detection, chunking
   app/schemas/               pydantic DTOs: the application's public contract
   app/db/                    engine, session, models, declarative base
       |
@@ -53,10 +56,16 @@ Supporting trees, outside the runtime path:
 | `app/schemas/` | DTOs for companies and vacancies + normalisation |
 | `app/repositories/` | CRUD; raises domain errors, never commits |
 | `app/services/` | Flow layer: multi-step operations (paginating job ingest) |
+| `app/workflows/` | DBOS workflows/steps; registers the `llm` and `job-ingest` queues |
+| `app/llm/` | Versioned prompts, candidate profiles, translation and grading |
+| `app/text/` | HTML sanitising, language detection, chunking, content hashing |
+| `app/integrations/ollama/` | The only code that occupies the GPU |
 | `app/integrations/nvb/` | NVB client (`client.py`), models (`schema.py`), mapper (`mapper.py`) |
 | `app/logging_setup.py` | File logger for development (`logs/dev.log`) |
 | `scripts/ingest_companies.py` | Loads `companies.json` into `companies` |
 | `scripts/ingest_jobs.py` | Ingests every result page for one or more queries |
+| `scripts/enrich_jobs.py` | Queues translation/grading; also `--progress`, `--shortlist` |
+| `profiles/*.json` | Candidate profiles a vacancy is scored against |
 | `tools/cmdlog.py` | Append-only shell-command audit log with risk levels |
 
 ## Data model
@@ -121,6 +130,39 @@ result idempotent. Vacancies also fill in `companies.slug`, `type` and
 
 The vacancy logo is deliberately not modelled or stored.
 
+
+### Enrichment: `job_translations`, `job_assessments`
+
+LLM-derived data lives apart from `jobs` because it is expensive (~16s of GPU
+each) and has its own provenance: `source_hash`, `model` and `prompt_version` on
+every row. That gives re-ingest safety (updating a vacancy never destroys GPU
+work), an off switch (unchanged text is never re-translated), and cheap prompt
+iteration (a new version re-runs only older rows).
+
+`job_assessments` deliberately separates **role fit** from **eligibility**:
+
+- `fit_score` (0-100) rates the work only.
+- `blocked`, `dutch_required` and `red_flags` carry the barriers.
+
+So a Python role requiring fluent Dutch scores 85 *and* `blocked=true` - "a great
+job you cannot take", which is different and more useful than a low score. The
+shortlist hides blocked rows by default. See ADR-0007.
+
+## The GPU constraint
+
+There is one GPU. All model work is enqueued on the `llm` queue, registered with
+`worker_concurrency=1` **and** `global_concurrency=1`. The second limit is
+enforced in the system database, so a second app process or a stray CLI run
+still cannot put two jobs on the card - a single Horizon-style worker would only
+bind one process. Verified by enqueueing six jobs at once and observing peak
+concurrency 1.
+
+Page fetching is network-bound and runs on a separate `job-ingest` queue with
+`worker_concurrency=3`, so scraping is parallel while inference stays serial.
+
+`register_queues()` must be called **after** `DBOS.launch()`: it writes the
+limits to the system database and raises if called earlier.
+
 ## Request and data flows
 
 **Company ingest** (operational, manual):
@@ -145,6 +187,24 @@ POST /jobs/search -> job_search_workflow
 Idempotent on `(source, external_id)`: re-running the same search updates the
 existing vacancies instead of duplicating them. Pass `{"store": false}` to log
 without persisting.
+
+**Full pipeline** (scrape, then translate and grade):
+
+```
+POST /jobs/pipeline -> scrape_and_enrich_workflow
+    |- fetch page 1, learn the page count
+    |- pages 2..n on the job-ingest queue      (parallel, concurrency 3)
+    '- enrich_pending_workflow
+         '- one enrich_job_workflow per vacancy on the llm queue  (SERIAL, 1)
+              |- prepare_text   sanitise, hash, detect language   (no GPU)
+              |- translate_step chunked Dutch -> English          (GPU)
+              |- assess_step    score against the profile as JSON (GPU)
+              '- persist_enrichment                               (no GPU)
+```
+
+Skipping is the main optimisation: English text never reaches the model, and a
+vacancy whose cleaned-text hash and prompt version are unchanged uses no GPU at
+all.
 
 Steps are the checkpoint unit: a crash after `fetch_jobs` resumes without
 re-issuing the HTTP call.
@@ -180,6 +240,10 @@ rest of the crawl. Re-running updates in place.
   checkpointed values stay plain and portable.
 - **Secrets come from the environment.** `.env` is git-ignored; `.env.example`
   documents the keys.
+- **Model work is always queued, never called directly.** The GPU guarantee
+  lives in the `llm` queue; scripts enqueue rather than invoke.
+- **Prompts are versioned constants**, and the version is stored with every row
+  the model produces.
 
 ## Testing strategy
 
@@ -217,3 +281,7 @@ heuristics assign. See ADR-0005.
   fetched vacancy; the 2901 seed rows stay empty until then.
 - `province` holds cities and is not normalised.
 - No authentication, and no CI pipeline.
+- `profiles/default.json` was seeded by inference from this project's stack, not
+  confirmed with the user; every `fit_score` is only as good as that file.
+- Assessment quality is bounded by a 4B model. Prompt constraints, JSON-mode
+  decoding and field coercion contain it; a larger model is a settings change.
