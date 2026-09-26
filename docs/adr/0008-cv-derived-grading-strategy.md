@@ -94,6 +94,25 @@ the prompt treats as a small bonus when a vacancy explicitly asks for them. This
 is what a skills list alone misses about a candidate whose CV leads with "cut
 failed API submissions by 90%".
 
+## Amendment - 2026-09-26: education
+
+The first version of the profile captured skills, languages, location and
+domains from the CV but **dropped the education section entirely**. Dutch
+vacancies state a level rather than a named degree - MBO (vocational), HBO
+(university of applied sciences, roughly a bachelor's), WO (research
+university) - so the model saw "HBO required", found nothing about education in
+the profile, and reported it as a qualification the candidate lacks. It did so
+on **343 of 546 assessments**, for someone holding a bachelor's and a master's.
+
+The profile now records the degrees held and, more importantly, which Dutch
+levels they satisfy, and the prompt explains what those levels mean. The
+dealbreaker "requires a professional qualification the candidate does not hold"
+was also being read as covering education levels; it now names licensed
+professions explicitly (nursing/BIG, medical, legal bar), which is what it
+always meant.
+
+Prompt version: assess-v3.
+
 ## Consequences
 
 - Scores mean something specific: a 45 is "your familiar tier, under-qualified",

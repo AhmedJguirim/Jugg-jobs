@@ -64,6 +64,29 @@ class TestPromptRendering:
 
         assert "unspecified" in text
 
+    def test_states_education_and_its_dutch_equivalence(self):
+        """Dutch adverts ask for a level (HBO/WO), not a named degree.
+
+        Without the equivalence spelled out, the model read "HBO required" as a
+        qualification the candidate lacks - it flagged that on 343 of 546
+        assessments for someone holding a master's.
+        """
+        text = load_profile("ahmed").as_prompt_text()
+
+        assert "Highest education:" in text
+        assert "Meets Dutch education levels:" in text
+        assert "HBO" in text
+
+    def test_a_profile_without_education_still_renders(self):
+        assert "Headline:" in CandidateProfile(name="none").as_prompt_text()
+
+    def test_dealbreakers_name_licences_not_education_levels(self):
+        """"Professional qualification" was being read as any stated level."""
+        dealbreakers = " ".join(load_profile("ahmed").dealbreakers).lower()
+
+        assert "licensed profession" in dealbreakers
+        assert "hbo" not in dealbreakers
+
     def test_is_plain_text_not_json(self):
         """A 4B model echoes JSON back; labelled lines work better."""
         text = load_profile("default").as_prompt_text()

@@ -23,7 +23,7 @@ prompts do deliberately:
 from __future__ import annotations
 
 TRANSLATION_PROMPT_VERSION = "translate-nl-en-v1"
-ASSESSMENT_PROMPT_VERSION = "assess-v2"
+ASSESSMENT_PROMPT_VERSION = "assess-v3"
 
 # ---------------------------------------------------------------------------
 # Translation
@@ -191,6 +191,15 @@ explicitly offers visa sponsorship or relocation support, note that in \
 "matched_requirements" and keep this true.
 - "blocked": true if the vacancy hits any stated dealbreaker, requires Dutch, \
 or requires sponsorship. Name each reason in "red_flags".
+
+## Dutch education levels
+
+Vacancies state a level, not a named qualification:
+  MBO  - senior secondary vocational
+  HBO  - university of applied sciences, roughly a bachelor's degree
+  WO   - research university, bachelor's or master's
+
+Compare these against the candidate's "Meets Dutch education levels" line. If the level the vacancy asks for is listed there, the candidate MEETS it - do not report it as missing, and do not treat it as a dealbreaker. These are education levels, not professional registrations: a nursing BIG registration or a legal bar admission is a licence, "HBO" is not.
 
 ## Rules
 

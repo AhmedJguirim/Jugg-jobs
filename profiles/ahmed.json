@@ -3,10 +3,25 @@
   "_source": "Derived from ahmed_jguirim_cv.pdf on 2026-09-26. Contact details are deliberately excluded - grading needs skills and eligibility, not an email address.",
   "headline": "Full-stack web developer - PHP/Laravel and Symfony, with production performance and debugging work",
   "summary": "Software engineer with production experience in Symfony/API Platform and the Laravel/TALL stack. Focused on stabilising high-traffic applications and fixing what underperforms or breaks in production: cut failed third-party API submissions by 90% and API response times by 40-80%.",
-
   "years_experience": 1,
-  "seniority": ["junior", "mid"],
-
+  "seniority": [
+    "junior",
+    "mid"
+  ],
+  "education": {
+    "_comment": "Dutch adverts state a level: MBO (vocational), HBO (university of applied sciences, ~bachelor), WO (research university, bachelor/master). The degrees below meet HBO and WO.",
+    "highest_level": "Master's degree (software engineering)",
+    "degrees": [
+      "Software Engineering Degree - EPI DS, International Multidisciplinary Digital School (2022-2025)",
+      "Bachelor's Degree in E-Business Management Computing - SupTech (2019-2022)"
+    ],
+    "meets_dutch_levels": [
+      "MBO",
+      "HBO",
+      "WO"
+    ],
+    "field": "software engineering / computing"
+  },
   "skills": {
     "core": [
       "PHP",
@@ -43,14 +58,12 @@
       "Ruby on Rails"
     ]
   },
-
   "differentiators": [
     "production debugging - diagnosing silent failures with no exception trace from logs and database analysis",
     "performance optimisation - N+1 elimination, Redis caching, moving heavy work to background workers",
     "third-party API integration and fixing broken request/response contracts",
     "shipping under pressure - hotfixes every ~2 days during a stabilisation phase after the team shrank from 8 to 3"
   ],
-
   "domains": [
     "B2B ERP",
     "marketing automation and email marketing",
@@ -58,7 +71,6 @@
     "document management (EDMS, OCR, semantic search)",
     "manufacturing execution systems (MES)"
   ],
-
   "target_roles": [
     "Backend Developer",
     "PHP Developer",
@@ -69,7 +81,6 @@
     "Software Engineer",
     "API Developer"
   ],
-
   "not_interested_in": [
     "healthcare, nursing and care roles",
     "logistics, warehouse, driving and field-technician roles",
@@ -78,24 +89,29 @@
     "teaching and education roles",
     "non-technical roles"
   ],
-
   "languages": {
-    "native": ["Arabic"],
-    "fluent": ["English"],
-    "proficient": ["French"],
-    "none": ["Dutch"]
+    "native": [
+      "Arabic"
+    ],
+    "fluent": [
+      "English"
+    ],
+    "proficient": [
+      "French"
+    ],
+    "none": [
+      "Dutch"
+    ]
   },
-
   "location": {
     "based_in": "Sousse, Tunisia",
     "work_authorization": "No EU/Netherlands work permit. Needs visa sponsorship and relocation for an on-site or hybrid role in the Netherlands, or a role that hires remotely from Tunisia.",
     "relocation": "Willing to relocate to the Netherlands if the employer sponsors a work permit",
     "remote_preference": "Fully remote works without sponsorship; on-site/hybrid requires sponsorship"
   },
-
   "dealbreakers": [
     "requires fluent or business-level Dutch",
-    "requires a professional qualification the candidate does not hold",
+    "requires a licensed profession the candidate is not registered for (e.g. nursing/BIG, medical, legal bar)",
     "unpaid or commission-only"
   ]
 }

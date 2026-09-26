@@ -60,6 +60,7 @@ class CandidateProfile:
     target_roles: list[str] = field(default_factory=list)
     not_interested_in: list[str] = field(default_factory=list)
 
+    education: dict[str, Any] = field(default_factory=dict)
     languages: dict[str, Any] = field(default_factory=dict)
     location: dict[str, Any] = field(default_factory=dict)
     dealbreakers: list[str] = field(default_factory=list)
@@ -120,6 +121,17 @@ class CandidateProfile:
             f"  FAMILIAR - touched only, not production depth: "
             f"{', '.join(self.peripheral_skills) or 'none'}",
         ]
+
+        education = self.education or {}
+        if education:
+            lines += [
+                f"Highest education: {education.get('highest_level', 'unspecified')}"
+                + (f" in {education['field']}" if education.get("field") else ""),
+                # Dutch adverts state a level rather than a degree, so the
+                # equivalence is spelled out: without it the model reads "HBO
+                # required" as a qualification the candidate lacks.
+                f"Meets Dutch education levels: {', '.join(education.get('meets_dutch_levels', [])) or 'unspecified'}",
+            ]
 
         if self.differentiators:
             lines.append(f"Particular strengths: {'; '.join(self.differentiators)}")
