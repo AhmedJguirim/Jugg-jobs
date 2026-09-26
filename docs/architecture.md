@@ -310,6 +310,12 @@ rest of the crawl. Re-running updates in place.
 
 - **Transactions belong to the caller.** Repositories `flush()` but never
   `commit()`, so several calls compose into one atomic unit of work.
+- **Get-or-create is done inside a SAVEPOINT.** Pages are ingested in parallel,
+  so two of them can race to create the same company, location or vocabulary
+  term. Losing that race rolls back only the savepoint and returns the row the
+  winner committed, leaving the rest of the page's work intact. `store_page` is
+  additionally retried, because PostgreSQL breaks a lock cycle between two
+  concurrent pages by aborting one with a deadlock error.
 - **Domain errors, not ORM errors.** Repositories raise `CompanyNotFound` /
   `DuplicateCompany`; callers never catch `IntegrityError`.
 - **Schema changes only via Alembic.** `create_all` is used solely to build the

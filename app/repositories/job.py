@@ -60,19 +60,48 @@ _VOCABULARIES = {
 # ---- resolving related rows ----
 
 
+
+def _get_or_create(session: Session, model: Type, **keys):
+    """Fetch a row by its natural key, creating it if absent - concurrency safe.
+
+    A plain SELECT-then-INSERT races: the ingest queue processes pages in
+    parallel, so two pages carrying the same industry ("Industrie") both find
+    nothing and both insert, and one dies on the unique constraint. Observed in
+    production as `UniqueViolation on uq_industries_name` during a four-page
+    company scrape.
+
+    The insert is therefore attempted inside a SAVEPOINT. If a competing
+    transaction won the race, only the savepoint is rolled back - the rest of
+    the page's work survives - and the row it committed is returned instead.
+    """
+    existing = session.scalar(select(model).filter_by(**keys))
+    if existing is not None:
+        return existing
+
+    savepoint = session.begin_nested()
+    try:
+        created = model(**keys)
+        session.add(created)
+        savepoint.commit()
+        return created
+    except IntegrityError:
+        savepoint.rollback()
+        # The competing transaction has committed by now, so this finds its row.
+        found = session.scalar(select(model).filter_by(**keys))
+        if found is None:  # pragma: no cover - the other side rolled back
+            raise
+        return found
+
+
 def get_or_create_term(session: Session, model: Type, name: str):
     """Fetch a vocabulary term by name, creating it if new.
 
     Vocabularies are closed sets that grow only when the source introduces a
     value, so create-on-first-sight is the right behaviour: ingest never fails
-    because a new category appeared.
+    because a new category appeared - nor because two pages introduced it at
+    the same moment.
     """
-    term = session.scalar(select(model).where(model.name == name))
-    if term is None:
-        term = model(name=name)
-        session.add(term)
-        session.flush()
-    return term
+    return _get_or_create(session, model, name=name)
 
 
 def get_or_create_location(session: Session, payload: LocationBase) -> Location:
@@ -87,10 +116,22 @@ def get_or_create_location(session: Session, payload: LocationBase) -> Location:
     if existing is not None:
         return existing
 
-    location = Location(**payload.model_dump())
-    session.add(location)
-    session.flush()
-    return location
+    # Same race as the vocabularies: two pages can carry the same city.
+    savepoint = session.begin_nested()
+    try:
+        location = Location(**payload.model_dump())
+        session.add(location)
+        savepoint.commit()
+        return location
+    except IntegrityError:
+        savepoint.rollback()
+        return session.scalar(
+            select(Location).where(
+                Location.city == payload.city,
+                Location.municipality.is_not_distinct_from(payload.municipality),
+                Location.province.is_not_distinct_from(payload.province),
+            )
+        )
 
 
 def get_or_create_company(
@@ -119,10 +160,18 @@ def get_or_create_company(
             slug = None
 
     if company is None:
-        company = Company(name=name, slug=slug, type=type, website=website)
-        session.add(company)
-        session.flush()
-        return company
+        savepoint = session.begin_nested()
+        try:
+            company = Company(name=name, slug=slug, type=type, website=website)
+            session.add(company)
+            savepoint.commit()
+            return company
+        except IntegrityError:
+            # Another page created this employer first.
+            savepoint.rollback()
+            company = session.scalar(select(Company).where(Company.name == name))
+            if company is None:  # pragma: no cover - lost to a rollback
+                raise
 
     for field, value in (("slug", slug), ("type", type), ("website", website)):
         if value and getattr(company, field) is None:

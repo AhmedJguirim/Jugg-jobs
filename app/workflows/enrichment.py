@@ -95,9 +95,15 @@ def fetch_page(query: str, page: int, limit: int, sort: str = "date") -> dict:
     return fetch_jobs_page(query, page=page, limit=limit, sort=sort)
 
 
-@DBOS.step()
+@DBOS.step(retries_allowed=True, max_attempts=3, interval_seconds=1)
 def store_page(payload: dict) -> dict:
-    """Persist one page of vacancies, with their companies and locations."""
+    """Persist one page of vacancies, with their companies and locations.
+
+    Retried: pages are stored concurrently, and PostgreSQL resolves a lock
+    cycle between two of them by aborting one with a deadlock error. That is
+    transient by nature - the retry re-runs the page and finds the rows the
+    other transaction committed. Observed during a four-page company scrape.
+    """
     created = updated = 0
     job_ids: list[int] = []
     with session_scope() as session:

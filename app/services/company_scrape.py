@@ -66,9 +66,9 @@ def query_for(company: Company) -> str:
 
     name = (company.name or "").strip()
     if name:
-        log.info(
-            "company %s has no search link; falling back to its name", company.id
-        )
+        # debug, not info: this is called once per row when listing employers,
+        # so at info level a single page view writes a burst of log lines.
+        log.debug("company %s has no search link; falling back to its name", company.id)
         return name
 
     raise NoSearchQuery(f"company {company.id} has neither a search link nor a name")
