@@ -33,6 +33,24 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO")
     sql_echo: bool = Field(default=False)
 
+    # --- local LLM (Ollama) ---
+    # One GPU, one model at a time: enforced by the `llm` DBOS queue's
+    # concurrency of 1, not by these settings. See ADR-0007.
+    ollama_base_url: str = Field(default="http://localhost:11434")
+    llm_model: str = Field(default="qwen3.5:4b")
+    # Generous: a cold model load plus a long chunk can take minutes.
+    llm_timeout_seconds: float = Field(default=600.0)
+    # 8192 comfortably fits the largest cleaned description chunk plus its
+    # translation; the model supports far more but larger contexts cost VRAM.
+    llm_num_ctx: int = Field(default=8192)
+    # Keep the model resident between queued jobs so each one does not reload it.
+    llm_keep_alive: str = Field(default="10m")
+    # Chunk size for translation; small enough that a 4B model translates
+    # rather than summarises.
+    llm_chunk_chars: int = Field(default=3000)
+    # Which scoring profile to use when none is named.
+    llm_default_profile: str = Field(default="default")
+
     def _url_for(self, database: str) -> str:
         return (
             f"postgresql+psycopg://{self.postgres_user}:{self.postgres_password}"

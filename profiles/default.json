@@ -1,0 +1,60 @@
+{
+  "name": "default",
+  "_comment": "EDIT THIS. It is what every vacancy is scored against. The starting values were inferred from this project's own stack (Python/FastAPI/SQLAlchemy/PostgreSQL, prior Laravel/Horizon experience) and from the stated fact that you do not read Dutch. Nothing here was confirmed with you, so correct it before trusting any fit_score.",
+  "headline": "Backend / full-stack software engineer",
+  "target_roles": [
+    "Backend Developer",
+    "Python Developer",
+    "Full Stack Developer",
+    "Software Engineer",
+    "PHP / Laravel Developer",
+    "Data Engineer"
+  ],
+  "seniority": ["mid", "senior"],
+  "strong_skills": [
+    "Python",
+    "FastAPI",
+    "SQLAlchemy",
+    "PostgreSQL",
+    "PHP",
+    "Laravel",
+    "REST APIs",
+    "SQL",
+    "Git",
+    "Docker"
+  ],
+  "familiar_skills": [
+    "JavaScript",
+    "TypeScript",
+    "Vue",
+    "React",
+    "Redis",
+    "Playwright",
+    "CI/CD",
+    "Linux",
+    "queues and background jobs",
+    "LLM / Ollama integration"
+  ],
+  "not_interested_in": [
+    "healthcare and nursing roles",
+    "logistics, warehouse and driving roles",
+    "retail, hospitality and call-centre roles",
+    "field technician and installation work",
+    "sales and account management",
+    "teaching and education roles"
+  ],
+  "languages": {
+    "fluent": ["English"],
+    "none": ["Dutch"]
+  },
+  "location": {
+    "country": "Netherlands",
+    "preferred": ["Amsterdam", "Utrecht", "Rotterdam", "Den Haag", "Eindhoven"],
+    "remote_preference": "hybrid or remote preferred, onsite acceptable"
+  },
+  "dealbreakers": [
+    "requires fluent or business-level Dutch",
+    "requires a professional qualification the candidate does not hold (e.g. nursing registration, BIG registration)",
+    "unpaid or commission-only"
+  ]
+}

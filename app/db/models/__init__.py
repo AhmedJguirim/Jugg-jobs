@@ -7,6 +7,7 @@ full schema; add each new model here.
 
 from app.db.base import Base
 from app.db.models.company import Company
+from app.db.models.enrichment import JobAssessment, JobTranslation
 from app.db.models.job import Job
 from app.db.models.location import Location
 from app.db.models.taxonomy import (
@@ -30,6 +31,8 @@ __all__ = [
     "EducationLevel",
     "Industry",
     "Job",
+    "JobAssessment",
+    "JobTranslation",
     "Location",
     "job_categories",
     "job_contract_types",

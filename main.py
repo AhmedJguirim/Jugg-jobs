@@ -12,8 +12,10 @@ from app import logging_setup
 from app.db.session import session_scope
 from app.integrations.nvb import fetch_jobs_page, to_job_creates
 from app.integrations.nvb.schema import JobSearchResponse
+from app.repositories import enrichment as enrichment_repo
 from app.repositories import job as job_repo
 from app.services.job_ingest import DEFAULT_LIMIT, IngestStats
+from app.workflows import enrichment as enrichment_flow
 from app.logging_setup import log
 
 # Welcome to DBOS!
@@ -436,7 +438,126 @@ def search_jobs(body: dict | None = None):
     return {"workflow_id": handle.workflow_id}
 
 
+# ---- LLM enrichment (translation + grading) ----
+# All model work runs on the `llm` queue, which is pinned to one job at a time
+# so the single GPU is never asked to run two models at once. See ADR-0007.
+
+
+@app.post("/jobs/pipeline")
+def start_pipeline(body: dict | None = None):
+    """Scrape every page for a query, then translate and grade what was found."""
+    body = body or {}
+    handle = DBOS.start_workflow(
+        enrichment_flow.scrape_and_enrich_workflow,
+        body.get("query", "Odido"),
+        int(body.get("limit", DEFAULT_LIMIT)),
+        int(body["max_pages"]) if body.get("max_pages") else None,
+        body.get("target_language", "en"),
+        body.get("profile", "default"),
+        bool(body.get("enrich", True)),
+    )
+    return {"workflow_id": handle.workflow_id}
+
+
+@app.post("/jobs/enrich")
+def start_enrichment(body: dict | None = None):
+    """Translate and grade every vacancy that needs it, one at a time."""
+    body = body or {}
+    handle = DBOS.start_workflow(
+        enrichment_flow.enrich_pending_workflow,
+        int(body.get("limit", 50)),
+        body.get("target_language", "en"),
+        body.get("profile", "default"),
+        bool(body.get("force", False)),
+    )
+    return {"workflow_id": handle.workflow_id}
+
+
+@app.post("/jobs/{job_id}/enrich")
+def enrich_one(job_id: int, body: dict | None = None):
+    """Enrich a single vacancy (still queued, so still one GPU job at a time)."""
+    body = body or {}
+    handle = DBOS.enqueue_workflow(
+        enrichment_flow.LLM_QUEUE,
+        enrichment_flow.enrich_job_workflow,
+        job_id,
+        body.get("target_language", "en"),
+        body.get("profile", "default"),
+        bool(body.get("force", False)),
+    )
+    return {"workflow_id": handle.workflow_id}
+
+
+@app.get("/jobs/enrich/progress")
+def enrichment_progress(profile: str = "default"):
+    """How much of the corpus is translated and graded, and GPU time spent."""
+    with session_scope() as session:
+        return enrichment_repo.enrichment_progress(session, profile_name=profile)
+
+
+@app.get("/jobs/shortlist")
+def job_shortlist(
+    profile: str = "default",
+    min_score: int = 55,
+    include_blocked: bool = False,
+    limit: int = 25,
+):
+    """The payoff: best-fitting vacancies with English summaries."""
+    with session_scope() as session:
+        rows = enrichment_repo.shortlist(
+            session,
+            profile_name=profile,
+            min_score=min_score,
+            include_blocked=include_blocked,
+            limit=limit,
+        )
+        return [
+            {
+                "job_id": job.id,
+                "fit_score": assessment.fit_score,
+                "verdict": assessment.verdict,
+                "blocked": assessment.blocked,
+                "dutch_required": assessment.dutch_required,
+                "title_en": (translation.title if translation else None) or job.title,
+                "title_original": job.title,
+                "company": job.company.name if job.company else None,
+                "city": job.city,
+                "salary": job.salary_range,
+                "summary": assessment.summary,
+                "red_flags": assessment.red_flags,
+                "url": job.detail_url,
+            }
+            for job, assessment, translation in rows
+        ]
+
+
+@app.get("/jobs/{job_id}/english")
+def job_in_english(job_id: int):
+    """One vacancy, translated - the reason this pipeline exists."""
+    with session_scope() as session:
+        job = job_repo.get(session, job_id)
+        if job is None:
+            return {"error": "job not found"}
+        translation = enrichment_repo.get_translation(session, job_id, "en")
+        return {
+            "job_id": job.id,
+            "title_original": job.title,
+            "title_en": translation.title if translation else None,
+            "description_en": translation.description if translation else None,
+            "translated": translation is not None,
+            "model": translation.model if translation else None,
+            "company": job.company.name if job.company else None,
+            "city": job.city,
+            "url": job.detail_url,
+        }
+
+
 if __name__ == "__main__":
     DBOS.launch()
+    # Queues are registered after launch: register_queue writes the queue's
+    # concurrency limits to the system database, which is only open post-launch.
+    # Nothing is enqueued before this point, so the limits are in force for all
+    # work this process starts.
+    enrichment_flow.register_queues()
     DBOS.register_queue(QUEUE_NAME, worker_concurrency=DEFAULT_WORKER_CONCURRENCY, on_conflict="never_update")
     uvicorn.run(app, host="0.0.0.0", port=8000)
