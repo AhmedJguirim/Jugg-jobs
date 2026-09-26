@@ -53,6 +53,14 @@ INGEST_WORKER_CONCURRENCY = 3
 # cannot ask for more.
 MAX_PAGES_PER_SCRAPE = 20
 
+# Ceiling on how many *new* vacancies one scrape will add.
+#
+# This is the cap that matters, because a new vacancy is what costs GPU time:
+# already-known ones are re-seen constantly across searches and cost nothing,
+# since their content hash is unchanged and enrichment skips them. Counting
+# pages bounds the crawl; counting new vacancies bounds the bill.
+MAX_NEW_VACANCIES_PER_SCRAPE = 50
+
 _queues_registered = False
 
 
@@ -105,25 +113,44 @@ def fetch_page(query: str, page: int, limit: int, sort: str = "date") -> dict:
 
 
 @DBOS.step(retries_allowed=True, max_attempts=3, interval_seconds=1)
-def store_page(payload: dict) -> dict:
+def store_page(payload: dict, max_new: Optional[int] = None) -> dict:
     """Persist one page of vacancies, with their companies and locations.
+
+    `max_new` stops partway through the page once that many *new* vacancies
+    have been added, so a cap of 50 means 50 rather than "50 rounded up to
+    whatever the page size happens to be". Vacancies left unstored are simply
+    picked up by the next scrape, since ingest is keyed on (source,
+    external_id).
 
     Retried: pages are stored concurrently, and PostgreSQL resolves a lock
     cycle between two of them by aborting one with a deadlock error. That is
     transient by nature - the retry re-runs the page and finds the rows the
     other transaction committed. Observed during a four-page company scrape.
     """
-    created = updated = 0
+    created = updated = skipped = 0
     job_ids: list[int] = []
     with session_scope() as session:
         for job_payload in to_job_creates(payload):
+            if max_new is not None and created >= max_new:
+                skipped += 1
+                continue
             job, was_created = job_repo.upsert(session, job_payload)
             job_ids.append(job.id)
             created += was_created
             updated += not was_created
 
-    log.info("stored page: %s created, %s updated", created, updated)
-    return {"created": created, "updated": updated, "job_ids": job_ids}
+    log.info(
+        "stored page: %s created, %s updated%s",
+        created,
+        updated,
+        f", {skipped} left for a later scrape" if skipped else "",
+    )
+    return {
+        "created": created,
+        "updated": updated,
+        "skipped": skipped,
+        "job_ids": job_ids,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -450,7 +477,7 @@ def scrape_and_enrich_workflow(
     total_pages = int(first.get("pages") or 1)
     last_page = min(total_pages, max_pages) if max_pages else total_pages
 
-    stored = store_page(first)
+    stored = store_page(first, MAX_NEW_VACANCIES_PER_SCRAPE)
     job_ids = list(stored["job_ids"])
     created, updated = stored["created"], stored["updated"]
 
@@ -574,19 +601,39 @@ def scrape_company_workflow(
             last_page,
         )
 
-    stored = store_page(first)
+    stored = store_page(first, MAX_NEW_VACANCIES_PER_SCRAPE)
     job_ids = list(stored["job_ids"])
     created, updated = stored["created"], stored["updated"]
 
-    page_handles = [
-        DBOS.enqueue_workflow(INGEST_QUEUE, ingest_page_workflow, query, page, limit)
-        for page in range(2, last_page + 1)
-    ]
-    for handle in page_handles:
-        result = handle.get_result()
+    # Sequential, not parallel: the budget is checked between pages, and three
+    # pages running at once could each add a full page of new vacancies before
+    # any of them is counted. Page fetches are sub-second and capped at 20, so
+    # the parallelism was worth little; stopping on the right page is worth
+    # more.
+    pages_walked = 1
+    hit_vacancy_cap = created >= MAX_NEW_VACANCIES_PER_SCRAPE
+
+    for page in range(2, last_page + 1):
+        if hit_vacancy_cap:
+            break
+        remaining = MAX_NEW_VACANCIES_PER_SCRAPE - created
+        result = store_page(fetch_page(query, page, limit), remaining)
         job_ids.extend(result["job_ids"])
         created += result["created"]
         updated += result["updated"]
+        pages_walked = page
+        if created >= MAX_NEW_VACANCIES_PER_SCRAPE:
+            hit_vacancy_cap = True
+            log.warning(
+                "company %s: query %r added %s new vacancies, stopping at the "
+                "cap of %s after page %s of %s.",
+                company_id,
+                query,
+                created,
+                MAX_NEW_VACANCIES_PER_SCRAPE,
+                page,
+                total_pages,
+            )
 
     # Stamped before enrichment: the scrape itself is done at this point, and a
     # later GPU failure should not make it look as though we never looked.
@@ -597,11 +644,13 @@ def scrape_company_workflow(
         "company": resolved.get("name"),
         "query": query,
         "status": "done",
-        "pages": last_page,
+        "pages": pages_walked,
         "pages_available": total_pages,
         # Surfaced so the UI can say the search was broader than we walked,
         # rather than implying the employer only has this many vacancies.
-        "truncated": truncated,
+        "truncated": truncated or pages_walked < total_pages,
+        "hit_vacancy_cap": hit_vacancy_cap,
+        "vacancy_cap": MAX_NEW_VACANCIES_PER_SCRAPE,
         "vacancies": len(job_ids),
         "created": created,
         "updated": updated,

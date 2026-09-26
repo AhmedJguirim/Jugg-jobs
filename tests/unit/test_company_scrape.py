@@ -124,3 +124,85 @@ class TestRecordScrape:
     def test_a_never_scraped_company_has_no_timestamp(self, company: Company):
         assert company.last_scraped_at is None
         assert company.last_scrape_vacancies is None
+
+
+def page_payload(external_ids: list[str]) -> dict:
+    """A minimal but valid Nationale Vacaturebank result page."""
+    return {
+        "page": 1,
+        "limit": len(external_ids),
+        "pages": 1,
+        "total": len(external_ids),
+        "_embedded": {
+            "jobs": [
+                {
+                    "id": external_id,
+                    "title": f"Job {external_id}",
+                    "company": {"name": "Cap B.V."},
+                }
+                for external_id in external_ids
+            ]
+        },
+    }
+
+
+class TestScrapeCaps:
+    """Ceilings on what one scrape may cost.
+
+    Both exist because the board searches full text: an employer whose name
+    contains a common word matches much of the site. "Service" returns 15,090
+    vacancies across 604 pages, none of them necessarily that employer's.
+    """
+
+    def test_page_cap_is_twenty(self):
+        from app.workflows.enrichment import MAX_PAGES_PER_SCRAPE
+
+        assert MAX_PAGES_PER_SCRAPE == 20
+
+    def test_new_vacancy_cap_is_fifty(self):
+        from app.workflows.enrichment import MAX_NEW_VACANCIES_PER_SCRAPE
+
+        assert MAX_NEW_VACANCIES_PER_SCRAPE == 50
+
+    def test_the_vacancy_cap_counts_new_rows_only(self, session, monkeypatch):
+        """Re-seen vacancies cost nothing to enrich, so they must not use budget."""
+        from contextlib import contextmanager
+
+        from app.repositories import job as job_repo
+        from app.schemas.job import JobCreate
+        from app.workflows import enrichment
+
+        # store_page opens its own session against the application database.
+        # Point it at this test's transaction so nothing escapes the rollback.
+        @contextmanager
+        def test_scope():
+            yield session
+
+        monkeypatch.setattr(enrichment, "session_scope", test_scope)
+
+        for external_id in ("a", "b", "c"):
+            job_repo.upsert(session, JobCreate(external_id=external_id, title="known"))
+
+        # Budget of 2: the three known ones are free, then two new ones land
+        # and the sixth is left for a later scrape.
+        result = enrichment.store_page(page_payload(["a", "b", "c", "d", "e", "f"]), 2)
+
+        assert result["created"] == 2
+        assert result["updated"] == 3
+        assert result["skipped"] == 1
+
+    def test_no_budget_stores_the_whole_page(self, session, monkeypatch):
+        from contextlib import contextmanager
+
+        from app.workflows import enrichment
+
+        @contextmanager
+        def test_scope():
+            yield session
+
+        monkeypatch.setattr(enrichment, "session_scope", test_scope)
+
+        result = enrichment.store_page(page_payload(["w", "x", "y", "z"]), None)
+
+        assert result["created"] == 4
+        assert result["skipped"] == 0

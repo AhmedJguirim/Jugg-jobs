@@ -611,10 +611,14 @@
                 this.playFailure();
                 return;
               }
+              let note = "";
+              if (r.hit_vacancy_cap) {
+                note = ` (stopped at the ${r.vacancy_cap}-new cap)`;
+              } else if (r.truncated) {
+                note = ` (first ${r.pages} of ${r.pages_available} pages)`;
+              }
               this.setScrape(companyId, {
-                status:
-                  r.vacancies + " found · " + r.created + " new" +
-                  (r.truncated ? ` (first ${r.pages} of ${r.pages_available} pages)` : ""),
+                status: r.vacancies + " found · " + r.created + " new" + note,
               });
               this.playSuccess();
               await this.refreshCompany(companyId);

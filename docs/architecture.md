@@ -229,6 +229,19 @@ The query is resolved in its own checkpointed step, so a flow that resumes after
 someone edits the seed link continues with the term it started with rather than
 silently switching searches mid-run.
 
+**A scrape adds at most 50 new vacancies, and walks at most 20 pages.** The
+vacancy cap is the one that matters, because a *new* vacancy is what costs GPU
+time - an already-known one is re-seen constantly across searches and costs
+nothing, since its content hash is unchanged and enrichment skips it. The cap is
+exact rather than "50 rounded up to a page": `store_page` takes the remaining
+budget and stops partway through a page, leaving the rest for a later scrape,
+which is safe because ingest is keyed on `(source, external_id)`.
+
+Pages are therefore walked **sequentially** in a company scrape. Three parallel
+pages could each add a full page of vacancies before any of them was counted;
+page fetches are sub-second and capped anyway, so stopping on the right page is
+worth more than the parallelism.
+
 **A scrape walks at most 20 pages.** The board searches full text, so an
 employer whose name contains a common word matches much of the site: "7
 Solutions" returns 287 vacancies over 12 pages, almost none of them that
