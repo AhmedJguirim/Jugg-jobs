@@ -279,3 +279,58 @@ class TestScraping:
     def test_never_scraped_employers_say_so(self, page_loaded: Page):
         """"Never looked" must be visibly different from "looked, found none"."""
         expect(page_loaded.locator("text=never scraped").first).to_be_visible()
+
+
+class TestRowScrapeButton:
+    """The scrape button on each listing row.
+
+    The row itself opens the drawer, so the button must stop the click from
+    propagating - otherwise every scrape would also pop the drawer open.
+    """
+
+    def test_every_row_has_a_scrape_button(self, page_loaded: Page):
+        rows = page_loaded.locator("ul > li")
+        buttons = page_loaded.locator('ul > li button:has-text("Scrape")')
+
+        assert buttons.count() == rows.count()
+
+    def test_clicking_it_does_not_open_the_drawer(self, page_loaded: Page):
+        page_loaded.locator('ul > li button:has-text("Scrape")').first.click()
+
+        expect(page_loaded.locator("text=Search this employer's jobs")).not_to_be_visible()
+
+    def test_clicking_it_starts_a_scrape(self, page_loaded: Page):
+        """Assert on the status line, not the button label.
+
+        The first employer returns nothing in about a second, so "Scraping…"
+        can be gone before the assertion runs; the status it leaves behind is
+        the durable signal.
+        """
+        row = page_loaded.locator("ul > li").first
+
+        row.locator('button:has-text("Scrape")').click()
+
+        expect(row.locator("p").last).not_to_be_empty(timeout=30_000)
+
+    def test_scrape_state_is_per_row(self, page_loaded: Page):
+        """One row's progress must not label any other row."""
+        rows = page_loaded.locator("ul > li")
+
+        rows.first.locator('button:has-text("Scrape")').click()
+        expect(rows.first.locator("p").last).not_to_be_empty(timeout=30_000)
+
+        assert rows.nth(1).locator('button:has-text("Scrape")').inner_text().strip() == "Scrape"
+
+    def test_the_row_reports_the_result_when_it_finishes(self, page_loaded: Page):
+        button = page_loaded.locator('ul > li button:has-text("Scrape")').first
+        status = page_loaded.locator("ul > li").first.locator("p").last
+
+        button.click()
+
+        # "N found · M new" once done, or an error label; either way it reports.
+        expect(status).to_contain_text("found", timeout=180_000)
+
+    def test_the_drawer_button_still_works(self, page_loaded: Page):
+        page_loaded.locator("ul > li h2").first.click()
+
+        expect(page_loaded.get_by_role("button", name="Scrape vacancies")).to_be_visible()

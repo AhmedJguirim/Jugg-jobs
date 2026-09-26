@@ -121,6 +121,8 @@
             <input type="checkbox" x-model="filters.has_jobs" @change="page = 0" class="accent-splice" />
             <span>Only employers with ingested vacancies</span>
           </label>
+          <span x-show="runningScrapes" class="text-cyan"
+                x-text="runningScrapes + ' scrape(s) running - grading stays queued one at a time'"></span>
           <button @click="reset()" class="ml-auto text-fg-muted hover:text-fg underline underline-offset-2">
             Reset
           </button>
@@ -182,6 +184,26 @@
                      :class="company.last_scraped_at ? 'text-fg-muted' : 'text-fg-muted/50'"
                      x-text="scrapedLabel(company)"></div>
               </div>
+
+              <!-- Scrape straight from the row. click.stop because the row
+                   itself opens the drawer, and the button should not do both. -->
+              <div class="shrink-0 w-28 text-right">
+                <button
+                  @click.stop="scrape(company)"
+                  :disabled="isScraping(company.id)"
+                  class="px-2.5 py-1.5 text-xs rounded-md border transition disabled:cursor-default"
+                  :class="isScraping(company.id)
+                    ? 'border-cyan/50 text-cyan'
+                    : 'border-ink-border text-fg-muted hover:border-splice/60 hover:text-splice'"
+                  :title="'Search ' + (company.search_query || company.name) + ' on Nationale Vacaturebank'"
+                >
+                  <span x-text="isScraping(company.id) ? 'Scraping…' : 'Scrape'"></span>
+                </button>
+                <p x-show="scrapeOf(company.id).status"
+                   class="text-[10px] mt-1 leading-tight"
+                   :class="scrapeOf(company.id).error ? 'text-danger' : 'text-fg-muted'"
+                   x-text="scrapeOf(company.id).status"></p>
+              </div>
             </div>
           </li>
         </template>
@@ -227,10 +249,10 @@
                   <div class="flex flex-wrap items-center gap-3">
                     <button
                       @click="scrape(selected)"
-                      :disabled="scraping"
+                      :disabled="isScraping(selected.id)"
                       class="px-3 py-2 text-sm rounded-md bg-splice/15 border border-splice/50 text-splice hover:bg-splice/25 disabled:opacity-40 disabled:hover:bg-splice/15 transition"
                     >
-                      <span x-text="scraping ? 'Scraping…' : 'Scrape vacancies'"></span>
+                      <span x-text="isScraping(selected.id) ? 'Scraping…' : 'Scrape vacancies'"></span>
                     </button>
                     <div class="text-xs text-fg-muted">
                       <div>
@@ -241,10 +263,10 @@
                     </div>
                   </div>
 
-                  <p x-show="scrapeStatus" class="text-xs mt-2"
-                     :class="scrapeError ? 'text-danger' : 'text-fg-muted'"
-                     x-text="scrapeStatus"></p>
-                  <p x-show="scraping" class="text-[11px] text-fg-muted mt-1">
+                  <p x-show="scrapeOf(selected.id).status" class="text-xs mt-2"
+                     :class="scrapeOf(selected.id).error ? 'text-danger' : 'text-fg-muted'"
+                     x-text="scrapeOf(selected.id).status"></p>
+                  <p x-show="isScraping(selected.id)" class="text-[11px] text-fg-muted mt-1">
                     Pages are fetched in parallel; translation and grading run one
                     vacancy at a time so only one model ever touches the GPU.
                   </p>
@@ -334,9 +356,9 @@
           loading: true,
           error: "",
           selected: null,
-          scraping: false,
-          scrapeStatus: "",
-          scrapeError: false,
+          // Per-company scrape state, keyed by id: several rows can run at
+          // once and each needs its own label without stomping on the others.
+          scrapes: {},
           filters: { q: "", province: "", has_jobs: false, order_by: "name" },
 
           get offset() {
@@ -389,8 +411,6 @@
           },
 
           async open(company) {
-            this.scrapeStatus = "";
-            this.scrapeError = false;
             this.selected = { ...company, vacancy_list: [] };
             try {
               const response = await fetch(`/api/companies/${company.id}`);
@@ -412,10 +432,26 @@
             return `last scraped ${when}` + (found === null ? "" : ` · ${found} found`);
           },
 
+          scrapeOf(id) {
+            return this.scrapes[id] || { running: false, status: "", error: false };
+          },
+
+          isScraping(id) {
+            return this.scrapeOf(id).running;
+          },
+
+          get runningScrapes() {
+            return Object.values(this.scrapes).filter((entry) => entry.running).length;
+          },
+
+          setScrape(id, patch) {
+            // Reassign the map so Alpine's reactivity sees the change.
+            this.scrapes = { ...this.scrapes, [id]: { ...this.scrapeOf(id), ...patch } };
+          },
+
           async scrape(company) {
-            this.scraping = true;
-            this.scrapeError = false;
-            this.scrapeStatus = "starting…";
+            if (this.isScraping(company.id)) return;
+            this.setScrape(company.id, { running: true, error: false, status: "starting…" });
             try {
               const response = await fetch(`/api/companies/${company.id}/scrape`, {
                 method: "POST",
@@ -424,47 +460,66 @@
               });
               if (!response.ok) throw new Error(`HTTP ${response.status}`);
               const started = await response.json();
-              this.scrapeStatus = `searching "${started.query}"…`;
+              this.setScrape(company.id, { status: "searching…" });
               await this.pollScrape(started.workflow_id, company.id);
             } catch (error) {
-              this.scrapeError = true;
-              this.scrapeStatus = `failed: ${error.message}`;
+              this.setScrape(company.id, { error: true, status: "failed: " + error.message });
             } finally {
-              this.scraping = false;
+              this.setScrape(company.id, { running: false });
             }
           },
 
           async pollScrape(workflowId, companyId) {
             // Enrichment is serialised on one GPU, so a busy queue can take a
             // while; poll patiently rather than giving up.
-            for (let attempt = 0; attempt < 600; attempt++) {
+            for (let attempt = 0; attempt < 900; attempt++) {
               await new Promise((resolve) => setTimeout(resolve, 2000));
               const response = await fetch(`/api/companies/scrape/${workflowId}`);
               if (!response.ok) continue;
               const body = await response.json();
-              if (body.status !== "SUCCESS") {
-                this.scrapeStatus = `running (${body.status.toLowerCase()})…`;
-                continue;
-              }
-              const r = body.result || {};
-              if (r.status === "no_query") {
-                this.scrapeError = true;
-                this.scrapeStatus = "no usable search query for this employer";
+
+              if (body.status === "ERROR") {
+                this.setScrape(companyId, { error: true, status: "failed - see the logs" });
                 return;
               }
-              this.scrapeStatus =
-                `done: ${r.vacancies} vacancies over ${r.pages} page(s) — ` +
-                `${r.created} new, ${r.updated} updated, ${r.enriched ?? 0} graded`;
-              // Refresh the row and the drawer so the new counts show.
-              await this.load();
-              const refreshed = await fetch(`/api/companies/${companyId}`);
-              if (refreshed.ok) {
-                const detail = await refreshed.json();
-                this.selected = detail;
+              if (body.status !== "SUCCESS") {
+                this.setScrape(companyId, { status: body.status.toLowerCase() + "…" });
+                continue;
               }
+
+              const r = body.result || {};
+              if (r.status === "no_query") {
+                this.setScrape(companyId, { error: true, status: "no search query" });
+                return;
+              }
+              this.setScrape(companyId, {
+                status: r.vacancies + " found · " + r.created + " new",
+              });
+              await this.refreshCompany(companyId);
               return;
             }
-            this.scrapeStatus = "still running — check back shortly";
+            this.setScrape(companyId, { status: "still running" });
+          },
+
+          async refreshCompany(companyId) {
+            // Update this row in place rather than reloading the listing:
+            // other rows may still be scraping, and a reload would discard
+            // their in-progress labels.
+            const response = await fetch(`/api/companies/${companyId}`);
+            if (!response.ok) return;
+            const detail = await response.json();
+            this.items = this.items.map((entry) =>
+              entry.id === companyId
+                ? {
+                    ...entry,
+                    vacancies: detail.vacancies,
+                    best_fit: detail.best_fit,
+                    last_scraped_at: detail.last_scraped_at,
+                    last_scrape_vacancies: detail.last_scrape_vacancies,
+                  }
+                : entry
+            );
+            if (this.selected && this.selected.id === companyId) this.selected = detail;
           },
 
           next() {
