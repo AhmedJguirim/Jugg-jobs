@@ -117,13 +117,16 @@ class TestFilters:
 
         expect(cards).not_to_have_count(before)
 
-    def test_raising_the_minimum_score_reduces_the_list(self, board: Page):
+    def test_raising_the_minimum_score_reduces_the_list(self, app_server: str, board: Page):
+        # Wait for the full list to render before counting: reading the count
+        # mid-render made this flaky once the corpus grew past 100 vacancies.
+        total = board.request.get(f"{app_server}/api/board").json()["stats"]["total_jobs"]
         cards = board.locator("ul > li")
-        before = cards.count()
+        expect(cards).to_have_count(total)
 
         board.locator('input[type="range"]').fill("90")
 
-        expect(cards).not_to_have_count(before)
+        expect(cards).not_to_have_count(total)
 
 
 class TestDetailDrawer:

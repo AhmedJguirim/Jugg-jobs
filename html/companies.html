@@ -1,0 +1,405 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Employers - job-hunt</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      // Same palette as html/app.html and html/board.html.
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              ink: { DEFAULT: "#16181d", raised: "#1c1f25", border: "#3a3d44" },
+              fg: { DEFAULT: "#d8d9dc", muted: "#a3a5aa" },
+              splice: "#c8f62e",
+              lily: "#9ab5e5",
+              cyan: "#44e3ee",
+              danger: "#dc5848",
+              warn: "#e5a82f",
+              ok: "#56a64b",
+            },
+            fontFamily: { sans: ['"Open Sans"', "system-ui", "sans-serif"] },
+          },
+        },
+      };
+    </script>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/alpinejs/3.14.9/cdn.min.js"></script>
+    <style>
+      [x-cloak] { display: none !important; }
+      ::-webkit-scrollbar { width: 10px; height: 10px; }
+      ::-webkit-scrollbar-track { background: #16181d; }
+      ::-webkit-scrollbar-thumb { background: #3a3d44; border-radius: 5px; }
+    </style>
+  </head>
+
+  <body class="bg-ink text-fg font-sans min-h-screen antialiased">
+    <div x-data="companies()" x-init="init()" x-cloak class="max-w-[1400px] mx-auto px-4 sm:px-6 py-6">
+      <!-- ── Header ─────────────────────────────────────────────────── -->
+      <header class="mb-6 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 class="text-2xl sm:text-3xl font-bold tracking-tight">Employers</h1>
+          <p class="text-sm text-fg-muted mt-1">
+            Every company we track, with their vacancies and job-board searches.
+          </p>
+        </div>
+        <nav class="flex items-center gap-2">
+          <a href="/board" class="px-3 py-2 text-sm rounded-md border border-ink-border hover:border-splice/60 hover:text-splice transition">
+            Job board
+          </a>
+          <a href="/" class="px-3 py-2 text-sm rounded-md border border-ink-border hover:border-lily/60 hover:text-lily transition">
+            Workflows
+          </a>
+        </nav>
+      </header>
+
+      <div x-show="error" class="mb-6 rounded-lg border border-danger/50 bg-danger/10 px-4 py-3 text-sm">
+        <strong class="text-danger">Could not load employers.</strong>
+        <span class="text-fg-muted" x-text="error"></span>
+      </div>
+
+      <!-- ── Stats ──────────────────────────────────────────────────── -->
+      <section class="grid grid-cols-3 gap-3 mb-6">
+        <div class="rounded-lg border border-ink-border bg-ink-raised px-4 py-3">
+          <div class="text-2xl font-bold tabular-nums" x-text="facets.total ?? 0"></div>
+          <div class="text-[11px] uppercase tracking-wider text-fg-muted mt-0.5">employers</div>
+        </div>
+        <div class="rounded-lg border border-ink-border bg-ink-raised px-4 py-3">
+          <div class="text-2xl font-bold tabular-nums text-splice" x-text="facets.with_jobs ?? 0"></div>
+          <div class="text-[11px] uppercase tracking-wider text-fg-muted mt-0.5">with vacancies</div>
+        </div>
+        <div class="rounded-lg border border-ink-border bg-ink-raised px-4 py-3">
+          <div class="text-2xl font-bold tabular-nums text-lily" x-text="facets.with_links ?? 0"></div>
+          <div class="text-[11px] uppercase tracking-wider text-fg-muted mt-0.5">with search links</div>
+        </div>
+      </section>
+
+      <!-- ── Filters ────────────────────────────────────────────────── -->
+      <section class="rounded-lg border border-ink-border bg-ink-raised p-4 mb-6">
+        <div class="grid gap-4 lg:grid-cols-[minmax(0,2fr)_repeat(2,minmax(0,1fr))]">
+          <div>
+            <label class="block text-[11px] uppercase tracking-wider text-fg-muted mb-1">Search</label>
+            <input
+              x-model.debounce.250ms="filters.q"
+              @input="page = 0"
+              type="search"
+              placeholder="company name…"
+              class="w-full bg-ink border border-ink-border rounded-md px-3 py-2 text-sm placeholder:text-fg-muted/60 focus:outline-none focus:border-splice/70"
+            />
+          </div>
+          <div>
+            <label class="block text-[11px] uppercase tracking-wider text-fg-muted mb-1">Region</label>
+            <select x-model="filters.province" @change="page = 0"
+                    class="w-full bg-ink border border-ink-border rounded-md px-3 py-2 text-sm focus:outline-none focus:border-splice/70">
+              <option value="">Anywhere</option>
+              <template x-for="p in facets.provinces" :key="p">
+                <option :value="p" x-text="p"></option>
+              </template>
+            </select>
+          </div>
+          <div>
+            <label class="block text-[11px] uppercase tracking-wider text-fg-muted mb-1">Sort</label>
+            <select x-model="filters.order_by" @change="page = 0"
+                    class="w-full bg-ink border border-ink-border rounded-md px-3 py-2 text-sm focus:outline-none focus:border-splice/70">
+              <option value="name">Name</option>
+              <option value="vacancies">Most vacancies</option>
+              <option value="fit">Best fit</option>
+              <option value="recent">Most recent posting</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-x-5 gap-y-2 mt-4 text-sm">
+          <label class="flex items-center gap-2 cursor-pointer select-none">
+            <input type="checkbox" x-model="filters.has_jobs" @change="page = 0" class="accent-splice" />
+            <span>Only employers with ingested vacancies</span>
+          </label>
+          <button @click="reset()" class="ml-auto text-fg-muted hover:text-fg underline underline-offset-2">
+            Reset
+          </button>
+        </div>
+      </section>
+
+      <!-- ── Result count ───────────────────────────────────────────── -->
+      <div class="flex items-baseline justify-between mb-3 text-sm">
+        <p class="text-fg-muted">
+          <span class="text-fg font-semibold tabular-nums" x-text="total"></span>
+          <span x-text="total === 1 ? ' employer' : ' employers'"></span>
+          <span x-show="total > 0" class="text-fg-muted"
+                x-text="` · showing ${offset + 1}-${Math.min(offset + items.length, total)}`"></span>
+        </p>
+        <span x-show="loading" class="text-fg-muted">loading…</span>
+      </div>
+
+      <div x-show="!loading && !items.length"
+           class="rounded-lg border border-dashed border-ink-border px-6 py-12 text-center">
+        <p class="font-semibold">No employer matches these filters.</p>
+        <button @click="reset()" class="text-sm text-splice underline underline-offset-2 mt-2">Reset them</button>
+      </div>
+
+      <!-- ── List ───────────────────────────────────────────────────── -->
+      <ul class="space-y-2">
+        <template x-for="company in items" :key="company.id">
+          <li @click="open(company)"
+              class="group rounded-lg border border-ink-border bg-ink-raised hover:border-splice/50 transition cursor-pointer">
+            <div class="flex items-center gap-4 px-4 py-3">
+              <div class="min-w-0 flex-1">
+                <div class="flex flex-wrap items-center gap-2">
+                  <h2 class="font-semibold truncate group-hover:text-splice transition" x-text="company.name"></h2>
+                  <span x-show="company.type"
+                        class="shrink-0 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border border-lily/40 text-lily"
+                        x-text="(company.type || '').replace(/_/g, ' ')"></span>
+                </div>
+                <p class="text-sm text-fg-muted mt-0.5 flex flex-wrap gap-x-2">
+                  <span x-show="company.province" x-text="company.province"></span>
+                  <span x-show="company.website">· <span x-text="company.website"></span></span>
+                  <span x-show="!company.province && !company.website" class="italic">no location on file</span>
+                </p>
+              </div>
+
+              <div class="shrink-0 text-right">
+                <div x-show="company.vacancies > 0">
+                  <span class="text-lg font-bold tabular-nums" x-text="company.vacancies"></span>
+                  <span class="text-[11px] uppercase tracking-wider text-fg-muted ml-1">vacancies</span>
+                </div>
+                <div x-show="company.best_fit !== null" class="text-xs mt-0.5">
+                  <span class="text-fg-muted">best fit</span>
+                  <span class="font-semibold tabular-nums ml-1" :class="fitColor(company.best_fit)"
+                        x-text="company.best_fit"></span>
+                </div>
+                <div x-show="!company.vacancies && company.has_links"
+                     class="text-[11px] uppercase tracking-wider text-fg-muted">
+                  search links only
+                </div>
+              </div>
+            </div>
+          </li>
+        </template>
+      </ul>
+
+      <!-- ── Pagination ─────────────────────────────────────────────── -->
+      <div x-show="total > limit" class="flex items-center justify-between mt-5 text-sm">
+        <button @click="prev()" :disabled="page === 0"
+                class="px-3 py-2 rounded-md border border-ink-border hover:border-lily/60 disabled:opacity-30 disabled:hover:border-ink-border transition">
+          ← Previous
+        </button>
+        <span class="text-fg-muted tabular-nums" x-text="`page ${page + 1} of ${Math.max(1, Math.ceil(total / limit))}`"></span>
+        <button @click="next()" :disabled="!hasMore"
+                class="px-3 py-2 rounded-md border border-ink-border hover:border-lily/60 disabled:opacity-30 disabled:hover:border-ink-border transition">
+          Next →
+        </button>
+      </div>
+
+      <!-- ── Detail drawer ──────────────────────────────────────────── -->
+      <div x-show="selected" x-transition.opacity @click.self="close()" @keydown.escape.window="close()"
+           class="fixed inset-0 z-40 bg-black/70 backdrop-blur-sm flex justify-end">
+        <aside x-show="selected"
+               x-transition:enter="transition ease-out duration-200"
+               x-transition:enter-start="translate-x-full"
+               x-transition:enter-end="translate-x-0"
+               class="w-full max-w-2xl h-full bg-ink border-l border-ink-border overflow-y-auto">
+          <template x-if="selected">
+            <div>
+              <div class="sticky top-0 bg-ink/95 backdrop-blur border-b border-ink-border px-5 py-4 z-10 flex items-start gap-3">
+                <div class="min-w-0 flex-1">
+                  <h2 class="text-lg font-bold" x-text="selected.name"></h2>
+                  <p class="text-sm text-fg-muted mt-0.5">
+                    <span x-show="selected.province" x-text="selected.province"></span>
+                    <span x-show="selected.type"> · <span x-text="(selected.type||'').replace(/_/g,' ')"></span></span>
+                  </p>
+                </div>
+                <button @click="close()" class="shrink-0 text-fg-muted hover:text-fg text-2xl leading-none px-1">&times;</button>
+              </div>
+
+              <div class="px-5 py-5 space-y-6">
+                <!-- job board searches: the point of the seed data -->
+                <section>
+                  <h3 class="text-[11px] uppercase tracking-wider text-fg-muted mb-2">
+                    Search this employer's jobs
+                  </h3>
+                  <div x-show="!selected.has_links" class="text-sm text-fg-muted italic">
+                    No search links on file - this employer came from a vacancy, not the seed list.
+                  </div>
+                  <div class="flex flex-wrap gap-2">
+                    <template x-for="[board, url] in Object.entries(selected.links || {})" :key="board">
+                      <a x-show="url" :href="url" target="_blank" rel="noopener"
+                         class="px-3 py-1.5 text-sm rounded-md border border-ink-border hover:border-splice/60 hover:text-splice transition"
+                         x-text="boardLabel(board) + ' ↗'"></a>
+                    </template>
+                  </div>
+                  <a x-show="selected.website" :href="selected.website" target="_blank" rel="noopener"
+                     class="inline-block mt-2 text-sm text-lily hover:underline" x-text="selected.website"></a>
+                </section>
+
+                <!-- vacancies we hold -->
+                <section>
+                  <h3 class="text-[11px] uppercase tracking-wider text-fg-muted mb-2">
+                    Ingested vacancies
+                    <span class="text-fg" x-text="`(${(selected.vacancy_list || []).length})`"></span>
+                  </h3>
+                  <p x-show="!(selected.vacancy_list || []).length" class="text-sm text-fg-muted italic">
+                    None yet. Use a search link above, or ingest a query that matches this employer.
+                  </p>
+                  <ul class="space-y-2">
+                    <template x-for="job in selected.vacancy_list || []" :key="job.id">
+                      <li class="rounded-md border border-ink-border px-3 py-2">
+                        <div class="flex items-start gap-3">
+                          <div class="shrink-0 w-10 text-center">
+                            <div class="font-bold tabular-nums" :class="fitColor(job.fit_score)"
+                                 x-text="job.fit_score ?? '–'"></div>
+                          </div>
+                          <div class="min-w-0 flex-1">
+                            <div class="flex flex-wrap items-center gap-2">
+                              <span class="font-medium text-sm" x-text="job.title"></span>
+                              <span x-show="job.blocked"
+                                    class="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border border-danger/50 text-danger">
+                                blocked
+                              </span>
+                            </div>
+                            <p class="text-xs text-fg-muted mt-0.5">
+                              <span x-show="job.city" x-text="job.city"></span>
+                              <span x-show="job.salary"> · <span x-text="job.salary"></span></span>
+                              <span x-show="job.posted"> · <span x-text="job.posted"></span></span>
+                            </p>
+                            <p x-show="job.summary" class="text-xs mt-1 text-fg/80 line-clamp-2" x-text="job.summary"></p>
+                          </div>
+                          <a x-show="job.url" :href="job.url" target="_blank" rel="noopener" @click.stop
+                             class="shrink-0 text-xs text-splice hover:underline">open ↗</a>
+                        </div>
+                      </li>
+                    </template>
+                  </ul>
+                </section>
+
+                <section class="border-t border-ink-border pt-4 text-xs text-fg-muted">
+                  <span x-text="`id ${selected.id}`"></span>
+                  <span x-show="selected.slug"> · slug <span x-text="selected.slug"></span></span>
+                  <span x-show="selected.created_at"> · added <span x-text="(selected.created_at||'').slice(0,10)"></span></span>
+                  <span x-text="` · from the ${selected.origin === 'seed' ? 'seed list' : 'vacancy feed'}`"></span>
+                </section>
+              </div>
+            </div>
+          </template>
+        </aside>
+      </div>
+    </div>
+
+    <script>
+      function companies() {
+        return {
+          items: [],
+          facets: { provinces: [], total: 0, with_jobs: 0, with_links: 0 },
+          total: 0,
+          limit: 50,
+          page: 0,
+          hasMore: false,
+          loading: true,
+          error: "",
+          selected: null,
+          filters: { q: "", province: "", has_jobs: false, order_by: "name" },
+
+          get offset() {
+            return this.page * this.limit;
+          },
+
+          async init() {
+            await this.loadFacets();
+            // Re-fetch whenever a filter or the page changes: pagination is
+            // server-side, so the browser never holds all 3000 employers.
+            this.$watch("filters", () => this.load(), { deep: true });
+            this.$watch("page", () => this.load());
+            await this.load();
+          },
+
+          async loadFacets() {
+            try {
+              const response = await fetch("/api/companies/facets");
+              if (response.ok) this.facets = await response.json();
+            } catch (error) {
+              this.error = error.message;
+            }
+          },
+
+          async load() {
+            this.loading = true;
+            this.error = "";
+            const params = new URLSearchParams({
+              limit: this.limit,
+              offset: this.offset,
+              order_by: this.filters.order_by,
+            });
+            if (this.filters.q) params.set("q", this.filters.q);
+            if (this.filters.province) params.set("province", this.filters.province);
+            if (this.filters.has_jobs) params.set("has_jobs", "true");
+
+            try {
+              const response = await fetch(`/api/companies?${params}`);
+              if (!response.ok) throw new Error(`HTTP ${response.status}`);
+              const data = await response.json();
+              this.items = data.items;
+              this.total = data.total;
+              this.hasMore = data.has_more;
+            } catch (error) {
+              this.error = error.message;
+              this.items = [];
+            } finally {
+              this.loading = false;
+            }
+          },
+
+          async open(company) {
+            this.selected = { ...company, vacancy_list: [] };
+            try {
+              const response = await fetch(`/api/companies/${company.id}`);
+              if (response.ok) this.selected = await response.json();
+            } catch (error) {
+              this.error = error.message;
+            }
+          },
+
+          close() {
+            this.selected = null;
+          },
+
+          next() {
+            if (this.hasMore) this.page += 1;
+          },
+
+          prev() {
+            if (this.page > 0) this.page -= 1;
+          },
+
+          reset() {
+            this.page = 0;
+            this.filters = { q: "", province: "", has_jobs: false, order_by: "name" };
+          },
+
+          fitColor(score) {
+            if (score === null || score === undefined) return "text-fg-muted";
+            if (score >= 80) return "text-splice";
+            if (score >= 55) return "text-cyan";
+            if (score >= 25) return "text-warn";
+            return "text-fg-muted";
+          },
+
+          boardLabel(board) {
+            return {
+              google: "Google",
+              linkedin: "LinkedIn",
+              indeed: "Indeed",
+              glassdoor: "Glassdoor",
+              nationalevacaturebank: "Nationale Vacaturebank",
+            }[board] || board;
+          },
+        };
+      }
+    </script>
+  </body>
+</html>

@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 
 from app import logging_setup
-from app.api import board_router
+from app.api import board_router, companies_router
 from app.db.session import session_scope
 from app.integrations.nvb import fetch_jobs_page, to_job_creates
 from app.integrations.nvb.schema import JobSearchResponse
@@ -32,8 +32,9 @@ config: DBOSConfig = {
 }
 DBOS(config=config)
 
-# Read-only API behind the job board view (app/api/board.py).
+# Read-only APIs behind the views (app/api/).
 app.include_router(board_router)
+app.include_router(companies_router)
 
 # Mirror DBOS/uvicorn logs into logs/dev.log alongside our own dev logger.
 logging_setup.attach("dbos", "uvicorn.error")
@@ -117,6 +118,13 @@ def crash_application():
 @app.get("/board")
 def board_page():
     with open(os.path.join("html", "board.html"), encoding="utf-8") as file:
+        return HTMLResponse(file.read())
+
+
+# This endpoint serves the employer browser.
+@app.get("/companies")
+def companies_page():
+    with open(os.path.join("html", "companies.html"), encoding="utf-8") as file:
         return HTMLResponse(file.read())
 
 

@@ -57,7 +57,9 @@ Supporting trees, outside the runtime path:
 | `app/repositories/` | CRUD; raises domain errors, never commits |
 | `app/services/` | Flow layer: multi-step operations (paginating job ingest) |
 | `app/api/board.py` | Read-only HTTP API behind the job board view |
+| `app/api/companies.py` | Read-only HTTP API behind the employers browser |
 | `html/board.html` | The job board: Tailwind + Alpine, served at `/board` |
+| `html/companies.html` | The employers browser, served at `/companies` |
 | `app/workflows/` | DBOS workflows/steps; registers the `llm` and `job-ingest` queues |
 | `app/llm/` | Versioned prompts, candidate profiles, translation and grading |
 | `profiles/*.json` | Tiered candidate profiles; `LLM_DEFAULT_PROFILE` picks one |
@@ -166,6 +168,20 @@ Two endpoints back it:
 - `GET /api/jobs/{id}` - one vacancy including both texts: the English
   translation and the *sanitised* original, which is what the model actually
   read, so a suspect translation can be checked against its input.
+
+`/companies` browses all 3017 employers. Unlike the board it paginates
+**server-side**: 3000+ rows is past the point where shipping the table to the
+browser is reasonable, so `/api/companies` takes `q`, `province`, `has_jobs`,
+`order_by`, `limit` and `offset`, and `/api/companies/{id}` returns one employer
+with its vacancies.
+
+The employer list has two distinct origins, which the UI labels:
+
+- **seed** (2901 rows) - from `companies.json`, carrying the pre-built Google,
+  LinkedIn, Indeed, Glassdoor and Nationale Vacaturebank search URLs but no
+  vacancies of their own;
+- **vacancy** (116 rows) - discovered while ingesting, carrying `type` and
+  `slug` and having actual vacancies attached.
 
 The page also carries a static glossary for the API's Dutch controlled
 vocabularies (`Vast` -> Permanent, `Ervaren` -> Experienced, HBO/MBO annotated).

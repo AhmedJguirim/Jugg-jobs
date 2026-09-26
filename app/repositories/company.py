@@ -11,12 +11,14 @@ exceptions, so callers depend on this module rather than on the ORM.
 
 from typing import Iterable, Optional, Sequence
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db.models.company import Company
+from app.db.models.enrichment import JobAssessment
+from app.db.models.job import Job
 from app.schemas.company import CompanyCreate, CompanyUpdate
 
 
@@ -198,3 +200,121 @@ def delete(session: Session, company_id: int) -> None:
     company = get_or_404(session, company_id)
     session.delete(company)
     session.flush()
+
+
+# ---- browsing with vacancy statistics ----
+
+# One row of the browse listing: the employer plus what we know about their
+# vacancies. Kept as a tuple rather than a model because it is a read-model for
+# the UI, not something that is ever written back.
+CompanyStats = tuple[Company, int, Optional[int], Optional[object]]
+
+
+def _browse_query(
+    *,
+    search: Optional[str] = None,
+    province: Optional[str] = None,
+    has_jobs: Optional[bool] = None,
+    has_links: Optional[bool] = None,
+    profile_name: str = "default",
+) -> Select:
+    """Employers with their vacancy count, best fit score and latest posting.
+
+    LEFT JOINs throughout: the seed file contributed 2901 employers with no
+    vacancies of their own, and they are exactly the ones worth browsing for
+    their job-board search links.
+    """
+    best_fit = func.max(JobAssessment.fit_score)
+    latest = func.max(Job.start_date)
+
+    query = (
+        select(Company, func.count(func.distinct(Job.id)), best_fit, latest)
+        .outerjoin(Job, Job.company_id == Company.id)
+        .outerjoin(
+            JobAssessment,
+            (JobAssessment.job_id == Job.id) & (JobAssessment.profile_name == profile_name),
+        )
+        .group_by(Company.id)
+    )
+
+    if search:
+        query = query.where(Company.name.ilike(f"%{search}%"))
+    if province:
+        query = query.where(Company.province == province)
+    if has_links is True:
+        query = query.where(Company.google_jobs_link.is_not(None))
+    elif has_links is False:
+        query = query.where(Company.google_jobs_link.is_(None))
+    if has_jobs is True:
+        query = query.having(func.count(func.distinct(Job.id)) > 0)
+    elif has_jobs is False:
+        query = query.having(func.count(func.distinct(Job.id)) == 0)
+
+    return query
+
+
+def browse(
+    session: Session,
+    *,
+    limit: int = 50,
+    offset: int = 0,
+    order_by: str = "name",
+    profile_name: str = "default",
+    **filters,
+) -> Sequence[CompanyStats]:
+    """A page of employers with their vacancy statistics.
+
+    Paginated in the database rather than in the browser: 3000+ employers is
+    past the point where shipping the whole table to the page is reasonable.
+    """
+    if limit < 1:
+        raise ValueError("limit must be >= 1")
+    if offset < 0:
+        raise ValueError("offset must be >= 0")
+
+    query = _browse_query(profile_name=profile_name, **filters)
+
+    orderings = {
+        "name": Company.name.asc(),
+        "vacancies": func.count(func.distinct(Job.id)).desc(),
+        "fit": func.max(JobAssessment.fit_score).desc().nullslast(),
+        "recent": func.max(Job.start_date).desc().nullslast(),
+    }
+    if order_by not in orderings:
+        raise ValueError(f"cannot order by {order_by!r}")
+
+    query = query.order_by(orderings[order_by], Company.name).limit(limit).offset(offset)
+    return [tuple(row) for row in session.execute(query).all()]
+
+
+def browse_count(session: Session, *, profile_name: str = "default", **filters) -> int:
+    """How many employers match, ignoring pagination."""
+    inner = _browse_query(profile_name=profile_name, **filters).subquery()
+    return session.scalar(select(func.count()).select_from(inner)) or 0
+
+
+def provinces(session: Session) -> Sequence[str]:
+    """Distinct province values, for the filter dropdown."""
+    return session.scalars(
+        select(Company.province)
+        .where(Company.province.is_not(None))
+        .distinct()
+        .order_by(Company.province)
+    ).all()
+
+
+def with_vacancies(
+    session: Session, company_id: int, *, profile_name: str = "default"
+) -> tuple[Company, Sequence[tuple[Job, Optional[JobAssessment]]]]:
+    """One employer and every vacancy ingested for them, best fit first."""
+    company = get_or_404(session, company_id)
+    rows = session.execute(
+        select(Job, JobAssessment)
+        .outerjoin(
+            JobAssessment,
+            (JobAssessment.job_id == Job.id) & (JobAssessment.profile_name == profile_name),
+        )
+        .where(Job.company_id == company_id)
+        .order_by(JobAssessment.fit_score.desc().nullslast(), Job.start_date.desc().nullslast())
+    ).unique().all()
+    return company, [tuple(row) for row in rows]
