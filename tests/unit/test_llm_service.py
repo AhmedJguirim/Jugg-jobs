@@ -66,6 +66,10 @@ def valid_assessment(**overrides) -> str:
         "seniority": "senior",
         "stack_match": "core",
         "seniority_fit": "good",
+        "location_policy": "unknown",
+        "requires_existing_permit": False,
+        "permit_evidence": "",
+        "offers_sponsorship": False,
         "dutch_required": False,
         "sponsorship_required": False,
         "blocked": False,
@@ -297,7 +301,10 @@ class TestAssessJob:
     ):
         """The model claimed an on-site internship needed no sponsorship because
         "the candidate is eligible for remote work" - which the vacancy never
-        said. Anything but a confirmed remote role needs a permit."""
+        said. Anything but a confirmed remote role needs a permit.
+
+        Needing one is a relocation, not a block: the candidate will move.
+        """
         profile.location = {"work_authorization": "No EU work permit; needs sponsorship"}
         monkeypatch.setattr(
             service,
@@ -308,7 +315,8 @@ class TestAssessJob:
         result = assess_job(**CORE_JOB, profile=profile)
 
         assert result.sponsorship_required is True
-        assert result.blocked is True
+        assert result.eligibility == "relocation"
+        assert result.blocked is False
 
     def test_a_fully_remote_role_needs_no_sponsorship(self, monkeypatch, profile):
         profile.location = {"work_authorization": "No EU work permit; needs sponsorship"}
@@ -424,3 +432,132 @@ class TestAssessJob:
         )
 
         assert len(assess_job(**CORE_JOB, profile=profile).red_flags) <= 8
+
+
+class TestEligibilityTiers:
+    """Red / orange / green, decided in code from what the advert states.
+
+    Red must come from the advert ruling the candidate out, not from the job
+    merely being on site - the candidate is willing to relocate.
+    """
+
+    @pytest.fixture
+    def needs_permit(self, profile):
+        profile.location = {
+            "work_authorization": "No EU work permit; needs sponsorship",
+            "relocation": "Willing to relocate",
+        }
+        return profile
+
+    def test_onsite_and_silent_on_permits_is_relocation_not_blocked(
+        self, monkeypatch, needs_permit
+    ):
+        """The commonest case: a Dutch advert that never mentions permits."""
+        monkeypatch.setattr(
+            service,
+            "chat",
+            FakeLlm(valid_assessment(location_policy="onsite", requires_existing_permit=False)),
+        )
+
+        result = assess_job(**CORE_JOB, profile=needs_permit)
+
+        assert result.eligibility == "relocation"
+        assert result.blocked is False
+
+    def test_an_explicit_permit_requirement_blocks(self, monkeypatch, needs_permit):
+        monkeypatch.setattr(
+            service,
+            "chat",
+            FakeLlm(
+                valid_assessment(
+                    requires_existing_permit=True,
+                    permit_evidence="you must already hold a valid EU work permit",
+                )
+            ),
+        )
+
+        result = assess_job(
+            title="Laravel Developer",
+            description="We hire in Utrecht. Note: you must already hold a valid EU work permit.",
+            profile=needs_permit,
+        )
+
+        assert result.eligibility == "blocked"
+        assert result.requires_existing_permit is True
+
+    def test_a_quote_that_is_not_in_the_advert_is_ignored(self, monkeypatch, needs_permit):
+        monkeypatch.setattr(
+            service,
+            "chat",
+            FakeLlm(
+                valid_assessment(
+                    requires_existing_permit=True,
+                    permit_evidence="you must already hold a valid EU work permit",
+                )
+            ),
+        )
+
+        result = assess_job(**CORE_JOB, profile=needs_permit)  # advert says no such thing
+
+        assert result.requires_existing_permit is False
+        assert result.eligibility == "relocation"
+
+    def test_a_real_quote_about_something_else_is_ignored(self, monkeypatch, needs_permit):
+        """The model quoted "Laravel developer wanted for our Utrecht office."
+
+        A real sentence from the advert that says nothing about permits. A
+        verbatim check alone let that through.
+        """
+        monkeypatch.setattr(
+            service,
+            "chat",
+            FakeLlm(
+                valid_assessment(
+                    requires_existing_permit=True,
+                    permit_evidence="Build Laravel and PHP services.",
+                )
+            ),
+        )
+
+        result = assess_job(**CORE_JOB, profile=needs_permit)
+
+        assert result.requires_existing_permit is False
+        assert result.eligibility == "relocation"
+
+    def test_fully_remote_is_green(self, monkeypatch, needs_permit):
+        monkeypatch.setattr(
+            service, "chat", FakeLlm(valid_assessment(location_policy="remote_worldwide"))
+        )
+
+        result = assess_job(**CORE_JOB, profile=needs_permit)
+
+        assert result.eligibility == "remote_ok"
+        assert result.sponsorship_required is False
+
+    def test_dutch_requirement_still_blocks(self, monkeypatch, needs_permit):
+        monkeypatch.setattr(
+            service, "chat", FakeLlm(valid_assessment(dutch_required=True))
+        )
+
+        assert assess_job(**CORE_JOB, profile=needs_permit).eligibility == "blocked"
+
+    def test_an_authorised_candidate_onsite_is_not_a_relocation(self, monkeypatch, profile):
+        profile.location = {"work_authorization": "EU citizen, free to work in the NL"}
+        monkeypatch.setattr(
+            service, "chat", FakeLlm(valid_assessment(location_policy="onsite"))
+        )
+
+        result = assess_job(**CORE_JOB, profile=profile)
+
+        assert result.sponsorship_required is False
+        assert result.eligibility == "relocation"
+
+    def test_sponsorship_offered_is_surfaced(self, monkeypatch, needs_permit):
+        monkeypatch.setattr(
+            service, "chat", FakeLlm(valid_assessment(offers_sponsorship=True))
+        )
+
+        result = assess_job(**CORE_JOB, profile=needs_permit)
+
+        assert result.offers_sponsorship is True
+        assert result.eligibility == "relocation"

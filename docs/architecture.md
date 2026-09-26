@@ -207,6 +207,21 @@ judgement call. This came from a failure: asked to pick the tier itself, a 4B
 kept calling a Python vacancy "unrelated" on a profile that lists Python under
 familiar.
 
+Eligibility is a traffic light, derived in code from what the advert states
+(ADR-0008 amendment):
+
+| Tier | Meaning | Set when |
+|---|---|---|
+| `blocked` (red) | the advert rules the candidate out | it demands an existing permit or residency, or fluent Dutch |
+| `relocation` (orange) | reachable, needs a move or a visa conversation | on site or hybrid, advert silent on permits |
+| `remote_ok` (green) | doable from where the candidate already is | fully remote with no country restriction |
+
+A permit claim is only honoured when the model quotes the sentence and that
+quote both appears in the advert **and** contains language about the right to
+work. Asked for evidence, the model returned "Laravel developer wanted for our
+Utrecht office." - a real sentence saying nothing about permits. Verbatim
+matching alone let an inference through wearing a quotation as a disguise.
+
 Eligibility never moves the score. `dutch_required`, `sponsorship_required`,
 `seniority_fit` and `blocked` are recorded beside it, so "a great role you
 cannot take" stays distinguishable from "a role in the wrong field".
@@ -280,6 +295,14 @@ concurrency 1.
 
 Page fetching is network-bound and runs on a separate `job-ingest` queue with
 `worker_concurrency=3`, so scraping is parallel while inference stays serial.
+
+**Clearing a wedged queue.** Bumping the version has a sharp edge: DBOS only
+recovers workflows belonging to the *current* version, so a job left PENDING by
+the old one is never resumed - while still counting against
+`global_concurrency`. On a queue that allows a single job, one orphan wedges it
+permanently and nothing runs again. `python scripts/enrich_jobs.py
+--clear-stuck` cancels workflows stranded by another version. Observed: one
+`enrich_job_workflow` PENDING at 0.1.0 held the only slot while 91 jobs waited.
 
 **Bump `application_version` when a workflow's step sequence changes.** DBOS
 replays a recovered workflow against the current code and aborts with

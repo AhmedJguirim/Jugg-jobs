@@ -23,7 +23,7 @@ prompts do deliberately:
 from __future__ import annotations
 
 TRANSLATION_PROMPT_VERSION = "translate-nl-en-v1"
-ASSESSMENT_PROMPT_VERSION = "assess-v3"
+ASSESSMENT_PROMPT_VERSION = "assess-v4"
 
 # ---------------------------------------------------------------------------
 # Translation
@@ -118,7 +118,10 @@ ASSESSMENT_SCHEMA_DESCRIPTION = """\
   "seniority": "<one of: intern, junior, mid, senior, lead, unknown>",
   "seniority_fit": "<one of: under_qualified, good, over_qualified, unknown>",
   "dutch_required": <true or false>,
-  "sponsorship_required": <true or false>,
+  "location_policy": "<one of: remote_worldwide, remote_eu_only, hybrid, onsite, unknown>",
+  "requires_existing_permit": <true or false>,
+  "permit_evidence": "<the exact sentence from the advert that says so, or an empty string>",
+  "offers_sponsorship": <true or false>,
   "blocked": <true or false>,
   "remote": "<one of: onsite, hybrid, remote, unknown>",
   "summary": "<2-3 sentence plain-English summary of the role>",
@@ -184,13 +187,28 @@ wrong field" - different problems with different answers.
 language ability is needed. Being WRITTEN in Dutch is NOT sufficient evidence - \
 look for an explicit language requirement, or duties such as phone contact with \
 Dutch-speaking customers or patients.
-- "sponsorship_required": true if the role needs the candidate physically in \
-the Netherlands (on-site or hybrid), because they hold no EU work permit. Set \
-it false only for fully remote roles doable from outside the EU. If the vacancy \
-explicitly offers visa sponsorship or relocation support, note that in \
-"matched_requirements" and keep this true.
-- "blocked": true if the vacancy hits any stated dealbreaker, requires Dutch, \
-or requires sponsorship. Name each reason in "red_flags".
+- "location_policy": where the work can physically be done.
+  * "remote_worldwide" - the advert says the role is fully remote with no \
+country restriction, or explicitly welcomes applicants outside the EU.
+  * "remote_eu_only" - remote, but restricted to the EU, the Netherlands, or a \
+named set of countries.
+  * "hybrid" - partly on site.
+  * "onsite" - on site.
+  * "unknown" - the advert does not say. Most Dutch adverts do not say, and \
+"unknown" is the honest answer; do NOT guess "onsite" because it feels likely.
+- "requires_existing_permit": true ONLY when the advert states outright that \
+the applicant must already hold the right to work or already live in the \
+country, and you must quote that sentence verbatim in "permit_evidence". If you cannot quote it, the advert did not say it: set this false and leave the evidence empty. Phrases that qualify: "you must already have a valid EU/NL work \
+permit", "we do not sponsor visas", "no sponsorship available", "must be \
+currently residing in the Netherlands", "geen visumsponsoring", "je woont in \
+Nederland". A role simply being on site does NOT qualify. When the advert is \
+silent, this is false.
+- "offers_sponsorship": true when the advert explicitly offers visa \
+sponsorship, a highly-skilled-migrant (kennismigrant) procedure, or relocation \
+support.
+- "blocked": true if the vacancy hits a stated dealbreaker, requires Dutch, or \
+sets "requires_existing_permit". Needing to relocate is NOT by itself a block - \
+the candidate is willing to relocate. Name each reason in "red_flags".
 
 ## Dutch education levels
 

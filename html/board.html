@@ -164,8 +164,9 @@
         <div class="flex flex-wrap items-center gap-x-5 gap-y-2 mt-4 text-sm">
           <label class="flex items-center gap-2 cursor-pointer select-none">
             <input type="checkbox" x-model="filters.includeBlocked" class="accent-splice" />
-            <span>Show blocked
-              <span class="text-fg-muted">(hit a dealbreaker)</span>
+            <span>Show
+              <span class="text-danger">blocked</span>
+              <span class="text-fg-muted">(the advert rules you out)</span>
             </span>
           </label>
           <label class="flex items-center gap-2 cursor-pointer select-none">
@@ -229,17 +230,17 @@
               <div class="min-w-0 flex-1">
                 <div class="flex flex-wrap items-center gap-2">
                   <h2 class="font-semibold truncate group-hover:text-splice transition" x-text="job.title"></h2>
-                  <span x-show="job.blocked"
-                        class="shrink-0 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border border-danger/50 text-danger">
-                    blocked
-                  </span>
+                  <span x-show="job.assessed"
+                        class="shrink-0 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border"
+                        :class="eligibilityClass(job.eligibility)"
+                        x-text="eligibilityLabel(job.eligibility)"></span>
                   <span x-show="job.dutch_required"
                         class="shrink-0 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border border-warn/50 text-warn">
                     Dutch
                   </span>
-                  <span x-show="job.sponsorship_required"
-                        class="shrink-0 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border border-lily/50 text-lily">
-                    visa
+                  <span x-show="job.offers_sponsorship"
+                        class="shrink-0 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border border-ok/60 text-ok">
+                    sponsors
                   </span>
                   <span x-show="job.stack_match"
                         class="shrink-0 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border"
@@ -452,6 +453,21 @@
         return (terms || []).map(en).join(", ");
       }
 
+      function eligibilityDetail(job) {
+        if (job.eligibility === "remote_ok") return "remote - doable from Tunisia";
+        if (job.eligibility === "blocked") {
+          return job.requires_existing_permit
+            ? "the advert requires an existing permit"
+            : "blocked - see red flags";
+        }
+        if (job.eligibility === "relocation") {
+          return job.offers_sponsorship
+            ? "relocation - sponsorship offered"
+            : "relocation or visa conversation";
+        }
+        return "not assessed";
+      }
+
       function stackLabelOf(tier) {
         return {
           core: "core stack - daily production skills",
@@ -507,8 +523,9 @@
             return [
               { label: "vacancies", value: s.total_jobs ?? 0, accent: "" },
               { label: "worth a look", value: s.actionable ?? 0, accent: "text-splice" },
-              { label: "blocked", value: s.blocked ?? 0, accent: "text-danger" },
-              { label: "need Dutch", value: s.needs_dutch ?? 0, accent: "text-warn" },
+              { label: "remote OK", value: (s.eligibility || {}).remote_ok ?? 0, accent: "text-ok" },
+              { label: "relocation", value: (s.eligibility || {}).relocation ?? 0, accent: "text-warn" },
+              { label: "blocked", value: (s.eligibility || {}).blocked ?? 0, accent: "text-danger" },
               { label: "core stack", value: (s.stack_tiers || {}).core ?? 0, accent: "text-splice" },
               { label: "GPU seconds", value: Math.round(s.gpu_seconds_spent ?? 0), accent: "text-cyan" },
             ];
@@ -571,6 +588,24 @@
             return Math.round((done / total) * 100);
           },
 
+          eligibilityLabel(tier) {
+            return {
+              remote_ok: "remote OK",
+              relocation: "relocation",
+              blocked: "blocked",
+            }[tier] || "unknown";
+          },
+
+          eligibilityClass(tier) {
+            // Traffic light: green you can take today, orange needs a move or a
+            // visa conversation, red the advert itself rules you out.
+            return {
+              remote_ok: "border-ok/60 text-ok",
+              relocation: "border-warn/60 text-warn",
+              blocked: "border-danger/60 text-danger",
+            }[tier] || "border-ink-border text-fg-muted";
+          },
+
           stackLabel(tier) {
             return {
               core: "core stack",
@@ -614,7 +649,8 @@
               { label: "stack match", value: stackLabelOf(job.stack_match) },
               { label: "seniority", value: job.seniority || "unknown" },
               { label: "seniority fit", value: (job.seniority_fit || "unknown").replace(/_/g, " ") },
-              { label: "needs visa", value: job.sponsorship_required ? "yes - no EU permit" : "no" },
+              { label: "eligibility", value: eligibilityDetail(job) },
+              { label: "where", value: (job.location_policy || "not stated").replace(/_/g, " ") },
               { label: "work setup", value: job.remote || "unknown" },
               { label: "salary", value: job.salary || "not stated" },
               { label: "hours", value: job.hours || "not stated" },

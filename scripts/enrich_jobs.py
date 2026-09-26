@@ -68,6 +68,51 @@ def _print_shortlist(profile: str, min_score: int, include_blocked: bool, limit:
                 print(f"     {job.detail_url}")
 
 
+def _clear_stuck() -> int:
+    """Cancel workflows stranded PENDING by a previous application version.
+
+    Why this is needed: the `llm` queue allows one job at a time, and DBOS only
+    recovers workflows belonging to the *current* application version. Bump the
+    version while a job is running - which is exactly what you must do when a
+    workflow's steps change - and that job stays PENDING forever while still
+    counting against the concurrency limit. The queue then looks busy and never
+    dequeues anything again.
+
+    Observed: one enrich_job_workflow left PENDING at version 0.1.0 held the
+    only slot while 91 jobs waited behind it.
+    """
+    config: DBOSConfig = {
+        "name": "job-hunt-enrich",
+        "system_database_url": os.environ.get("DBOS_SYSTEM_DATABASE_URL"),
+        "application_version": "0.2.0",
+    }
+    DBOS(config=config)
+    DBOS.launch()
+    try:
+        current = "0.2.0"
+        stranded = [
+            workflow
+            for workflow in DBOS.list_workflows(
+                status="PENDING", load_input=False, load_output=False
+            )
+            if workflow.app_version and workflow.app_version != current
+        ]
+        if not stranded:
+            print("no stranded workflows; the queue is not wedged")
+            return 0
+
+        for workflow in stranded:
+            print(
+                f"cancelling {workflow.name} ({workflow.workflow_id[:8]}) "
+                f"left PENDING by version {workflow.app_version}"
+            )
+            DBOS.cancel_workflow(workflow.workflow_id, cancel_children=True)
+        print(f"cleared {len(stranded)} stranded workflow(s)")
+        return 0
+    finally:
+        DBOS.destroy()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--limit", type=int, default=200)
@@ -79,10 +124,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--shortlist", action="store_true", help="print best matches and exit")
     parser.add_argument("--min-score", type=int, default=55)
     parser.add_argument("--include-blocked", action="store_true")
+    parser.add_argument(
+        "--clear-stuck",
+        action="store_true",
+        help="cancel workflows left PENDING by an older app version, which can "
+             "wedge the single-slot llm queue",
+    )
     args = parser.parse_args(argv)
 
     settings = get_settings()
     profile = args.profile or settings.llm_default_profile
+
+    if args.clear_stuck:
+        return _clear_stuck()
 
     if args.progress:
         _print_progress()

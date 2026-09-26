@@ -90,6 +90,23 @@ class JobAssessment(Base, TimestampMixin):
     stack_match: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     seniority_fit: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
+    # Three-tier eligibility, derived in code from what the advert states:
+    #   blocked    - the advert itself rules the candidate out (red)
+    #   relocation - reachable, needs a move or a visa conversation (orange)
+    #   remote_ok  - doable from where the candidate already is (green)
+    # Indexed because "show me everything I could actually take" is the query
+    # this column exists to answer.
+    eligibility: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    location_policy: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # True only when the advert says outright that the applicant must already
+    # hold the right to work, or already live in the country.
+    requires_existing_permit: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    offers_sponsorship: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+
     dutch_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     # server_default so the column can be added to a table that already has
     # assessment rows without a separate backfill.

@@ -61,6 +61,10 @@ def _job_row(job: Job, assessment: Optional[JobAssessment], translation: Optiona
         "blocked": bool(assessment.blocked) if assessment else False,
         "dutch_required": bool(assessment.dutch_required) if assessment else False,
         "sponsorship_required": bool(assessment.sponsorship_required) if assessment else False,
+        "eligibility": (assessment.eligibility if assessment else None) or "unknown",
+        "location_policy": assessment.location_policy if assessment else None,
+        "requires_existing_permit": bool(assessment.requires_existing_permit) if assessment else False,
+        "offers_sponsorship": bool(assessment.offers_sponsorship) if assessment else False,
         "stack_match": assessment.stack_match if assessment else None,
         "seniority_fit": assessment.seniority_fit if assessment else None,
         "seniority": assessment.seniority if assessment else None,
@@ -117,6 +121,11 @@ def board(profile: str | None = None) -> dict[str, Any]:
             "blocked": sum(1 for r in jobs if r["blocked"]),
             "needs_dutch": sum(1 for r in jobs if r["dutch_required"]),
         "needs_sponsorship": sum(1 for r in jobs if r["sponsorship_required"]),
+        "eligibility": {
+            tier: sum(1 for r in jobs if r["eligibility"] == tier)
+            for tier in ("remote_ok", "relocation", "blocked")
+        },
+        "offers_sponsorship": sum(1 for r in jobs if r["offers_sponsorship"]),
         "stack_tiers": {
             tier: sum(1 for r in jobs if r["stack_match"] == tier)
             for tier in ("core", "proficient", "familiar", "unrelated", "non_technical")
@@ -128,6 +137,7 @@ def board(profile: str | None = None) -> dict[str, Any]:
             "verdicts": ["strong_match", "possible", "weak", "irrelevant"],
             "seniorities": sorted({r["seniority"] for r in jobs if r["seniority"]}),
             "stack_tiers": ["core", "proficient", "familiar", "unrelated", "non_technical"],
+            "eligibility": ["remote_ok", "relocation", "blocked"],
         },
     }
 

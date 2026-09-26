@@ -34,6 +34,15 @@ VERDICTS = {"strong_match", "possible", "weak", "irrelevant"}
 SENIORITIES = {"intern", "junior", "mid", "senior", "lead", "unknown"}
 REMOTE_VALUES = {"onsite", "hybrid", "remote", "unknown"}
 STACK_MATCHES = {"core", "proficient", "familiar", "unrelated", "non_technical"}
+LOCATION_POLICIES = {"remote_worldwide", "remote_eu_only", "hybrid", "onsite", "unknown"}
+
+# Three tiers, decided in code from the evidence the model reports:
+#   blocked    (red)    - the advert itself rules the candidate out
+#   relocation (orange) - reachable, but needs a move or a visa conversation
+#   remote_ok  (green)  - doable from where the candidate already is
+ELIGIBILITY_BLOCKED = "blocked"
+ELIGIBILITY_RELOCATION = "relocation"
+ELIGIBILITY_REMOTE_OK = "remote_ok"
 SENIORITY_FITS = {"under_qualified", "good", "over_qualified", "unknown"}
 
 # Small models sometimes wrap output in fences or a preamble despite being told
@@ -72,6 +81,11 @@ class AssessmentResult:
     dutch_required: bool = False
     sponsorship_required: bool = False
     blocked: bool = False
+    # Evidence from the advert, and the tier derived from it.
+    location_policy: str = "unknown"
+    requires_existing_permit: bool = False
+    offers_sponsorship: bool = False
+    eligibility: str = ELIGIBILITY_RELOCATION
     remote: str = "unknown"
     summary: str = ""
     matched_requirements: list[str] = field(default_factory=list)
@@ -345,6 +359,40 @@ def _profile_has_eu_authorization(profile: CandidateProfile) -> bool:
     return not any(phrase in text for phrase in lacks)
 
 
+# Words that make a sentence actually about the right to work or to live
+# somewhere. A quote without one of these is about something else.
+_PERMIT_TERMS = (
+    "permit", "visa", "sponsor", "right to work", "work authorisation",
+    "work authorization", "authorised to work", "authorized to work",
+    "eligible to work", "already live", "currently live", "currently residing",
+    "must reside", "must be based", "based in the eu", "resident of",
+    "eu citizen", "eu/eea", "verblijfsvergunning", "werkvergunning",
+    "woonachtig", "visumsponsoring", "tewerkstellingsvergunning",
+)
+
+
+def _evidence_is_real(evidence: str, description: str) -> bool:
+    """Check a quoted sentence exists in the advert AND is about permits.
+
+    Two hurdles, because the model cleared the first one dishonestly. Asked to
+    quote the sentence requiring a permit, it returned "Laravel developer wanted
+    for our Utrecht office." - a real sentence from a real advert that says
+    nothing about permits. Verbatim matching alone let an inference through
+    wearing a quotation as a disguise.
+
+    So the quote must appear in the text *and* contain language about the right
+    to work or to live somewhere. Anything else is the model reasoning from the
+    job being on site, which is precisely the inference this flag must not make.
+    """
+    quote = " ".join((evidence or "").split()).strip().strip('"').lower()
+    if len(quote) < 12:  # too short to be a real sentence
+        return False
+    if not any(term in quote for term in _PERMIT_TERMS):
+        return False
+    haystack = " ".join((description or "").split()).lower()
+    return quote in haystack
+
+
 def _score_to_verdict(score: int) -> str:
     if score >= 80:
         return "strong_match"
@@ -459,9 +507,49 @@ def assess_job(
     # without an EU permit needs sponsorship for it. Anything but a confirmed
     # remote role therefore requires sponsorship.
     needs_permit = not _profile_has_eu_authorization(profile)
-    sponsorship_required = needs_permit and remote != "remote"
+    location_policy = _coerce_choice(
+        data.get("location_policy"), LOCATION_POLICIES, "unknown"
+    )
+    # Only an explicit statement counts, and only one we can find in the text:
+    # the model claimed this for adverts that never mentioned permits.
+    claimed_permit = bool(data.get("requires_existing_permit", False))
+    permit_evidence = str(data.get("permit_evidence") or "")
+    requires_existing_permit = claimed_permit and _evidence_is_real(
+        permit_evidence, description
+    )
+    if claimed_permit and not requires_existing_permit:
+        log.info(
+            "ignoring an unevidenced permit requirement; the quoted sentence "
+            "is not in the advert: %r",
+            permit_evidence[:80],
+        )
+    offers_sponsorship = bool(data.get("offers_sponsorship", False))
 
-    blocked = bool(data.get("blocked", False)) or sponsorship_required or dutch_required
+    # Doable from outside the EU, so no permit question arises at all.
+    remote_from_anywhere = location_policy == "remote_worldwide" or remote == "remote"
+
+    # Hard blocks first, and they apply whatever the candidate's permit status:
+    # a Dutch-language requirement rules out someone who does not read Dutch
+    # whether or not they may legally work here. Checking permits first meant
+    # the language requirement was silently skipped for an authorised profile.
+    hard_blocked = (
+        dutch_required
+        or requires_existing_permit
+        or bool(data.get("blocked", False))
+    )
+
+    if hard_blocked:
+        eligibility = ELIGIBILITY_BLOCKED
+    elif remote_from_anywhere:
+        eligibility = ELIGIBILITY_REMOTE_OK
+    else:
+        # Reachable: the candidate is willing to relocate, and sponsorship is a
+        # conversation rather than a closed door. For a candidate who already
+        # holds the right to work, this simply means "on site".
+        eligibility = ELIGIBILITY_RELOCATION
+
+    sponsorship_required = needs_permit and not remote_from_anywhere
+    blocked = eligibility == ELIGIBILITY_BLOCKED
 
     return AssessmentResult(
         fit_score=score,
@@ -472,6 +560,10 @@ def assess_job(
         dutch_required=dutch_required,
         sponsorship_required=sponsorship_required,
         blocked=blocked,
+        eligibility=eligibility,
+        location_policy=location_policy,
+        requires_existing_permit=requires_existing_permit,
+        offers_sponsorship=offers_sponsorship,
         remote=remote,
         summary=str(data.get("summary") or "").strip()[:2000],
         matched_requirements=_coerce_list(data.get("matched_requirements")),
