@@ -51,6 +51,15 @@
           </p>
         </div>
         <nav class="flex items-center gap-2">
+          <button
+            @click="toggleSound()"
+            :title="soundEnabled ? 'Sound on - click to mute' : 'Sound off - click to unmute'"
+            :aria-label="soundEnabled ? 'Mute completion sound' : 'Unmute completion sound'"
+            class="px-3 py-2 text-sm rounded-md border border-ink-border transition"
+            :class="soundEnabled ? 'text-fg hover:border-cyan/60 hover:text-cyan' : 'text-fg-muted/60 hover:text-fg-muted'"
+          >
+            <span x-text="soundEnabled ? '♪' : '♪̸'"></span>
+          </button>
           <a href="/board" class="px-3 py-2 text-sm rounded-md border border-ink-border hover:border-splice/60 hover:text-splice transition">
             Job board
           </a>
@@ -359,6 +368,8 @@
           // Per-company scrape state, keyed by id: several rows can run at
           // once and each needs its own label without stomping on the others.
           scrapes: {},
+          soundEnabled: true,
+          audioContext: null,
           filters: { q: "", province: "", has_jobs: false, order_by: "name" },
 
           get offset() {
@@ -366,6 +377,7 @@
           },
 
           async init() {
+            this.loadSoundPreference();
             await this.loadFacets();
             // Re-fetch whenever a filter or the page changes: pagination is
             // server-side, so the browser never holds all 3000 employers.
@@ -432,6 +444,78 @@
             return `last scraped ${when}` + (found === null ? "" : ` · ${found} found`);
           },
 
+          // --- completion sound -------------------------------------------
+          // Synthesised rather than loaded from a file: no asset to ship, no
+          // network request, and it works offline.
+
+          loadSoundPreference() {
+            // Storage can throw (private windows, blocked site data), and the
+            // page must work either way.
+            try {
+              this.soundEnabled = localStorage.getItem("scrapeSound") !== "off";
+            } catch (error) {
+              this.soundEnabled = true;
+            }
+          },
+
+          toggleSound() {
+            this.soundEnabled = !this.soundEnabled;
+            try {
+              localStorage.setItem("scrapeSound", this.soundEnabled ? "on" : "off");
+            } catch (error) {
+              /* preference simply does not persist */
+            }
+            if (this.soundEnabled) this.playChime([880, 1318.5], 0.07);
+          },
+
+          ensureAudio() {
+            // Created during the click that starts a scrape: browsers only
+            // allow audio after a user gesture, and the completion sound
+            // arrives long after one. Resumed too, because a context created
+            // earlier may have been suspended in the meantime.
+            const Context = window.AudioContext || window.webkitAudioContext;
+            if (!Context) return null;
+            if (!this.audioContext) this.audioContext = new Context();
+            if (this.audioContext.state === "suspended") this.audioContext.resume();
+            return this.audioContext;
+          },
+
+          playChime(notes, noteLength = 0.12, type = "sine") {
+            if (!this.soundEnabled) return;
+            const context = this.ensureAudio();
+            if (!context) return;
+
+            notes.forEach((frequency, index) => {
+              const startAt = context.currentTime + index * noteLength * 0.75;
+              const oscillator = context.createOscillator();
+              const gain = context.createGain();
+
+              oscillator.type = type;
+              oscillator.frequency.setValueAtTime(frequency, startAt);
+
+              // A short attack and an exponential decay: ramping from zero
+              // avoids the click that an abrupt start produces.
+              gain.gain.setValueAtTime(0.0001, startAt);
+              gain.gain.exponentialRampToValueAtTime(0.13, startAt + 0.012);
+              gain.gain.exponentialRampToValueAtTime(0.0001, startAt + noteLength * 2.2);
+
+              oscillator.connect(gain).connect(context.destination);
+              oscillator.start(startAt);
+              oscillator.stop(startAt + noteLength * 2.4);
+            });
+          },
+
+          // A major triad rising: reads as "finished well" without being cute.
+          playSuccess() {
+            this.playChime([1046.5, 1318.5, 1568.0]);
+          },
+
+          // Two falling notes, quieter and duller, so a failure is audibly
+          // different from a success rather than just a second chime.
+          playFailure() {
+            this.playChime([440, 329.6], 0.16, "triangle");
+          },
+
           scrapeOf(id) {
             return this.scrapes[id] || { running: false, status: "", error: false };
           },
@@ -451,6 +535,8 @@
 
           async scrape(company) {
             if (this.isScraping(company.id)) return;
+            // Unlock audio here, while we still have the user gesture.
+            this.ensureAudio();
             this.setScrape(company.id, { running: true, error: false, status: "starting…" });
             try {
               const response = await fetch(`/api/companies/${company.id}/scrape`, {
@@ -464,6 +550,7 @@
               await this.pollScrape(started.workflow_id, company.id);
             } catch (error) {
               this.setScrape(company.id, { error: true, status: "failed: " + error.message });
+              this.playFailure();
             } finally {
               this.setScrape(company.id, { running: false });
             }
@@ -480,6 +567,7 @@
 
               if (body.status === "ERROR") {
                 this.setScrape(companyId, { error: true, status: "failed - see the logs" });
+                this.playFailure();
                 return;
               }
               if (body.status !== "SUCCESS") {
@@ -490,11 +578,13 @@
               const r = body.result || {};
               if (r.status === "no_query") {
                 this.setScrape(companyId, { error: true, status: "no search query" });
+                this.playFailure();
                 return;
               }
               this.setScrape(companyId, {
                 status: r.vacancies + " found · " + r.created + " new",
               });
+              this.playSuccess();
               await this.refreshCompany(companyId);
               return;
             }

@@ -18,8 +18,11 @@ pytestmark = pytest.mark.e2e
 @pytest.fixture
 def board(app_server: str, page: Page) -> Page:
     page.goto(f"{app_server}/board")
-    # Alpine renders behind x-cloak; the stat tiles appearing means it has run.
-    expect(page.locator("text=vacancies").first).to_be_visible(timeout=15_000)
+    # Wait for the cards themselves, not just the stat tiles. The board sends
+    # every vacancy in one payload and renders them client-side, so as the
+    # corpus grows the tiles appear well before the list does - waiting on the
+    # tiles alone made tests that count cards flaky.
+    expect(page.locator("ul > li").first).to_be_visible(timeout=30_000)
     return page
 
 

@@ -334,3 +334,94 @@ class TestRowScrapeButton:
         page_loaded.locator("ul > li h2").first.click()
 
         expect(page_loaded.get_by_role("button", name="Scrape vacancies")).to_be_visible()
+
+
+class TestCompletionSound:
+    """The chime that marks a finished scrape.
+
+    Synthesised with the Web Audio API, so there is no audio file to assert on.
+    These tests instead record every oscillator the page starts, which is the
+    closest thing to "what did the user hear".
+    """
+
+    @pytest.fixture
+    def listening(self, app_server: str, page: Page) -> Page:
+        page.add_init_script(
+            """
+            window.__notes = [];
+            const Real = window.AudioContext;
+            if (Real) {
+              window.AudioContext = class extends Real {
+                createOscillator() {
+                  const osc = super.createOscillator();
+                  const set = osc.frequency.setValueAtTime.bind(osc.frequency);
+                  osc.frequency.setValueAtTime = (value, at) => {
+                    window.__notes.push(Math.round(value));
+                    return set(value, at);
+                  };
+                  return osc;
+                }
+              };
+            }
+            """
+        )
+        page.goto(f"{app_server}/companies")
+        expect(page.locator("ul > li").first).to_be_visible(timeout=15_000)
+        return page
+
+    def state(self, page: Page):
+        return "Alpine.$data(document.querySelector('[x-data]'))"
+
+    def test_sound_is_on_by_default(self, listening: Page):
+        assert listening.evaluate(f"{self.state(listening)}.soundEnabled") is True
+
+    def test_success_plays_a_rising_triad(self, listening: Page):
+        listening.evaluate(f"{self.state(listening)}.playSuccess()")
+
+        notes = listening.evaluate("window.__notes")
+        assert notes == sorted(notes), "a success should rise, not fall"
+        assert len(notes) == 3
+
+    def test_failure_sounds_different_from_success(self, listening: Page):
+        listening.evaluate(f"{self.state(listening)}.playFailure()")
+        failure = listening.evaluate("window.__notes")
+
+        listening.evaluate("window.__notes = []")
+        listening.evaluate(f"{self.state(listening)}.playSuccess()")
+        success = listening.evaluate("window.__notes")
+
+        assert failure != success
+        assert failure == sorted(failure, reverse=True), "a failure should fall"
+        assert max(failure) < max(success), "a failure should be lower pitched"
+
+    def test_muting_silences_it(self, listening: Page):
+        listening.evaluate(f"{self.state(listening)}.soundEnabled = false")
+        listening.evaluate("window.__notes = []")
+
+        listening.evaluate(f"{self.state(listening)}.playSuccess()")
+
+        assert listening.evaluate("window.__notes") == []
+
+    def test_the_toggle_is_in_the_header(self, listening: Page):
+        expect(listening.get_by_role("button", name="Mute completion sound")).to_be_visible()
+
+    def test_the_preference_survives_a_reload(self, listening: Page):
+        listening.get_by_role("button", name="Mute completion sound").click()
+
+        listening.reload()
+        expect(listening.locator("ul > li").first).to_be_visible(timeout=15_000)
+
+        assert listening.evaluate(f"{self.state(listening)}.soundEnabled") is False
+        # Leave the browser profile as we found it for the next test.
+        listening.evaluate("localStorage.removeItem('scrapeSound')")
+
+    def test_blocked_storage_does_not_break_the_page(self, listening: Page):
+        """Private windows can make localStorage throw; sound must still work."""
+        listening.evaluate(
+            "Object.defineProperty(window, 'localStorage', "
+            "{ get() { throw new Error('blocked'); } })"
+        )
+
+        listening.evaluate(f"{self.state(listening)}.loadSoundPreference()")
+
+        assert listening.evaluate(f"{self.state(listening)}.soundEnabled") is True
