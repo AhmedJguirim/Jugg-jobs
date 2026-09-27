@@ -430,6 +430,19 @@ def enrich_pending_workflow(
     queue drains, and the parent workflow is itself durable, so this survives a
     restart mid-run.
     """
+    health = llm_available()
+    if not health["ok"]:
+        log.warning("enrichment skipped: %s", health["message"])
+        return {
+            "queued": 0,
+            "enriched": 0,
+            "up_to_date": 0,
+            "failed": 0,
+            "gpu_seconds": 0.0,
+            "status": "llm_unavailable",
+            "message": health["message"],
+        }
+
     with session_scope() as session:
         needs_translation = enrichment_repo.pending_translation(
             session,
@@ -564,6 +577,25 @@ def company_search_query(company_id: int) -> dict:
             "name": company.name,
             "query": query,
         }
+
+
+@DBOS.step()
+def llm_available() -> dict:
+    """Is the model server up, with the configured model installed?
+
+    Checked once before any enrichment is queued. Without this, an Ollama that
+    is simply not running turns into one failed workflow per vacancy, each
+    burning three retries with backoff first: a single scrape logged 43
+    failures and a stack trace, for what is really one fact - the server is
+    down. The vacancies are already stored by then, so the honest outcome is to
+    skip grading and say why; the next run picks them up untouched.
+    """
+    from app.integrations.ollama import health
+
+    ok, message = health()
+    if not ok:
+        log.warning("skipping enrichment: %s", message)
+    return {"ok": ok, "message": message}
 
 
 @DBOS.step()
@@ -731,6 +763,19 @@ def scrape_company_workflow(
         return summary
 
     # --- enrich, strictly one model at a time ---
+    health = llm_available()
+    if not health["ok"]:
+        summary["enrich_status"] = "llm_unavailable"
+        summary["enrich_message"] = health["message"]
+        summary["enriched"] = 0
+        log.info(
+            "company %s: scraped %s vacancies but skipped grading - %s",
+            company_id,
+            len(job_ids),
+            health["message"],
+        )
+        return summary
+
     selection = select_for_enrichment(
         list(dict.fromkeys(job_ids)),
         target_language,

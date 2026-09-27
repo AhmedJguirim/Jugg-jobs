@@ -611,6 +611,14 @@
                 this.playFailure();
                 return;
               }
+              if (r.enrich_status === "llm_unavailable") {
+                this.setScrape(companyId, {
+                  error: true,
+                  status: `${r.vacancies} saved · grading skipped: Ollama is not running`,
+                });
+                await this.refreshCompany(companyId);
+                return;
+              }
               let note = "";
               if (r.hit_vacancy_cap) {
                 note = ` (stopped at the ${r.vacancy_cap}-new cap)`;

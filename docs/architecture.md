@@ -284,6 +284,14 @@ Measured on a real runaway: 287 of 298 children cancelled, the queue drained to
 zero and the GPU went idle. Whatever was stored before the cancel stays stored,
 because pages commit as they are fetched.
 
+**Enrichment is preflighted.** Before any vacancy is queued for the GPU, one
+step asks whether the model server is reachable and the configured model
+installed. Without it, an Ollama that is simply not running became one failed
+workflow per vacancy - each burning three retries with backoff - and a stack
+trace, for what is a single fact. A scrape whose grading is skipped still keeps
+everything it scraped and says why; the next run picks the vacancies up
+untouched, because they are pending rather than failed.
+
 ## The GPU constraint
 
 There is one GPU. All model work is enqueued on the `llm` queue, registered with

@@ -311,3 +311,48 @@ class TestEnrichmentSelection:
         result = scoped.select_for_enrichment([bare.id], "en", "default", 50)
 
         assert result["ids"] == []
+
+
+class TestModelServerPreflight:
+    """Behaviour when the model server is not running.
+
+    Without a preflight check this was one failed workflow per vacancy, each
+    burning three retries with backoff first: one scrape logged 43 failures and
+    a stack trace for what is really a single fact - Ollama is down.
+    """
+
+    def test_reports_unavailable_when_the_server_is_down(self, monkeypatch):
+        from app.workflows import enrichment
+
+        monkeypatch.setattr(
+            "app.integrations.ollama.health",
+            lambda: (False, "ollama unreachable at http://localhost:11434"),
+        )
+
+        result = enrichment.llm_available()
+
+        assert result["ok"] is False
+        assert "unreachable" in result["message"]
+
+    def test_reports_available_when_the_server_is_up(self, monkeypatch):
+        from app.workflows import enrichment
+
+        monkeypatch.setattr(
+            "app.integrations.ollama.health", lambda: (True, "ollama ready with qwen3.5:4b")
+        )
+
+        assert enrichment.llm_available()["ok"] is True
+
+    def test_a_missing_model_counts_as_unavailable(self, monkeypatch):
+        """A typo in the model name should fail here, not on the first vacancy."""
+        from app.workflows import enrichment
+
+        monkeypatch.setattr(
+            "app.integrations.ollama.health",
+            lambda: (False, "model 'qwen9:4b' is not installed; run: ollama pull qwen9:4b"),
+        )
+
+        result = enrichment.llm_available()
+
+        assert result["ok"] is False
+        assert "ollama pull" in result["message"]

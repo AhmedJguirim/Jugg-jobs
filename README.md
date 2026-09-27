@@ -58,7 +58,10 @@ See [`docs/architecture.md`](docs/architecture.md) for the design, and
 
 6. **Translate and grade them on your local LLM**
 
-   Needs Ollama running with the model pulled (`ollama pull qwen3.5:4b`).
+   Needs Ollama running with the model pulled (`ollama pull qwen3.5:4b`). If it
+   is not running, scrapes still store their vacancies and simply report that
+   grading was skipped - run the enrichment again once Ollama is back and they
+   are picked up where they were left.
 
    ```shell
    python scripts/enrich_jobs.py                 # everything pending
