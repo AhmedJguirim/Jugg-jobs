@@ -29,10 +29,13 @@ from app.repositories import enrichment as enrichment_repo  # noqa: E402
 from app.workflows import enrichment as flow  # noqa: E402
 
 
-def _print_progress() -> None:
+def _print_progress(profile: str = "default") -> None:
     with session_scope() as session:
-        stats = enrichment_repo.enrichment_progress(session)
+        stats = enrichment_repo.enrichment_progress(session, profile_name=profile)
     print(
+        # Named explicitly: grading is per profile, and reading another
+        # profile's numbers as your own is an easy and misleading mistake.
+        f"profile                      : {profile}\n"
         f"vacancies with a description : {stats['jobs_with_description']}\n"
         f"translated                   : {stats['translated']} "
         f"({stats['translation_pending']} pending)\n"
@@ -57,8 +60,13 @@ def _print_shortlist(profile: str, min_score: int, include_blocked: bool, limit:
         for job, assessment, translation in rows:
             title = (translation.title if translation else None) or job.title
             flags = f"  [{'; '.join(assessment.red_flags)}]" if assessment.red_flags else ""
-            blocked = " BLOCKED" if assessment.blocked else ""
-            print(f"\n{assessment.fit_score:3d}  {assessment.verdict:<13}{blocked}  {title}")
+            # The tier is the decision; the score only says how well it fits.
+            tier = {
+                "remote_ok": " REMOTE OK ",
+                "relocation": " RELOCATION",
+                "blocked": " BLOCKED   ",
+            }.get(assessment.eligibility or "", "           ")
+            print(f"\n{assessment.fit_score:3d}  {assessment.verdict:<13}{tier}  {title}")
             print(f"     {job.company.name if job.company else '?'} - {job.city or '?'}")
             if assessment.summary:
                 print(f"     {assessment.summary}")
@@ -139,7 +147,7 @@ def main(argv: list[str] | None = None) -> int:
         return _clear_stuck()
 
     if args.progress:
-        _print_progress()
+        _print_progress(profile)
         return 0
     if args.shortlist:
         _print_shortlist(profile, args.min_score, args.include_blocked, args.limit)
@@ -189,7 +197,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"GPU {summary['gpu_seconds']}s"
             )
         print()
-        _print_progress()
+        _print_progress(profile)
     finally:
         DBOS.destroy()
     return 0
