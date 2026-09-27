@@ -494,20 +494,37 @@ def enrich_pending_workflow(
     ]
 
     results = []
-    for handle in handles:
+    cancelled = 0
+    for index, handle in enumerate(handles):
         try:
             results.append(handle.get_result())
         except Exception as error:  # one bad vacancy must not sink the batch
             log.exception("enrich: a queued vacancy failed: %s", error)
             results.append({"status": "failed", "error": str(error)})
 
+            # Same reasoning as the company scrape: check whether the server
+            # is still there before letting the rest of the queue fail too.
+            health = llm_available()
+            if not health["ok"]:
+                cancelled = _cancel_queued(handles, index + 1)
+                log.warning(
+                    "enrich: model server went away mid-run, cancelled %s "
+                    "queued vacancy(ies) - %s",
+                    cancelled,
+                    health["message"],
+                )
+                break
+
     summary = {
         "queued": len(job_ids),
         "enriched": sum(1 for r in results if r.get("status") == "enriched"),
         "up_to_date": sum(1 for r in results if r.get("status") == "up_to_date"),
         "failed": sum(1 for r in results if r.get("status") == "failed"),
+        "cancelled": cancelled,
         "gpu_seconds": round(sum(r.get("gpu_ms", 0) for r in results) / 1000, 1),
     }
+    if cancelled:
+        summary["status"] = "llm_unavailable"
     log.info("enrich done: %s", summary)
     return summary
 
@@ -603,6 +620,24 @@ def company_search_query(company_id: int) -> dict:
             "name": company.name,
             "query": query,
         }
+
+
+def _cancel_queued(handles, from_index: int) -> int:
+    """Cancel the enrichment workflows that have not started yet.
+
+    Called when the model server has gone away mid-run. Without this, every
+    vacancy still on the queue takes its turn, spends three retries with
+    backoff discovering the same thing, and fails - fifty vacancies of that is
+    several minutes of nothing.
+    """
+    cancelled = 0
+    for handle in handles[from_index:]:
+        try:
+            DBOS.cancel_workflow(handle.workflow_id, cancel_children=True)
+            cancelled += 1
+        except Exception:  # already finished, or gone
+            continue
+    return cancelled
 
 
 @DBOS.step()
@@ -831,13 +866,33 @@ def scrape_company_workflow(
     ]
 
     enriched = failed = 0
-    for handle in handles:
+    for index, handle in enumerate(handles):
         try:
             result = handle.get_result()
             enriched += result.get("status") == "enriched"
         except Exception as error:  # one vacancy must not sink the scrape
             log.exception("company %s: enriching a vacancy failed: %s", company_id, error)
             failed += 1
+
+            # A failure might be this one vacancy, or it might be the model
+            # server having gone away. Ask, rather than guess from the
+            # exception type, which does not survive the workflow boundary
+            # reliably. If the server is gone, everything still queued will
+            # fail the same way, so stop now.
+            health = llm_available()
+            if not health["ok"]:
+                abandoned = _cancel_queued(handles, index + 1)
+                log.warning(
+                    "company %s: model server went away mid-run, cancelled %s "
+                    "queued vacancy(ies) - %s",
+                    company_id,
+                    abandoned,
+                    health["message"],
+                )
+                summary["enrich_status"] = "llm_unavailable"
+                summary["enrich_message"] = health["message"]
+                summary["enrich_cancelled"] = abandoned
+                break
 
     summary["enriched"] = enriched
     summary["failed"] = failed

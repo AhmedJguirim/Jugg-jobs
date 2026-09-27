@@ -612,9 +612,12 @@
                 return;
               }
               if (r.enrich_status === "llm_unavailable") {
+                const stopped = r.enrich_cancelled
+                  ? `grading stopped: Ollama went away (${r.enrich_cancelled} cancelled)`
+                  : "grading skipped: Ollama is not running";
                 this.setScrape(companyId, {
                   error: true,
-                  status: `${r.vacancies} saved · grading skipped: Ollama is not running`,
+                  status: `${r.vacancies} saved · ${stopped}`,
                 });
                 await this.refreshCompany(companyId);
                 return;

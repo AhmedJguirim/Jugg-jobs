@@ -197,6 +197,13 @@ that employer's. Distinctive names behave well; generic ones bring noise.
 
 ## 6. When something looks stuck
 
+### The page says "grading stopped: Ollama went away"
+
+The server died partway through. The run cancelled whatever was still queued
+rather than letting it fail one vacancy at a time. Start `ollama serve` and run
+the enrichment again - everything scraped is kept, and the ungraded vacancies
+are picked up where they were left.
+
 ### The page says "grading skipped: Ollama is not running"
 
 Exactly what it says. Start `ollama serve` and run the enrichment again - the

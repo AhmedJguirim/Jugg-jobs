@@ -293,6 +293,14 @@ vacancy stays ungraded with status `assessment_unreadable`: the translation is
 already banked, and the next run retries a sampled call that usually succeeds.
 Failing the workflow instead would have thrown away the expensive half.
 
+**A run stops when the model server goes away mid-flight.** The preflight only
+covers the moment before work is queued. When a queued vacancy fails, the
+workflow asks whether the server is still there - rather than guessing from an
+exception type that does not survive the workflow boundary reliably - and if it
+is gone, cancels everything still queued. Measured by killing Ollama during a
+real scrape: it stopped 17 seconds later having cancelled 49 vacancies, with 4
+failures instead of the 156 the same event produced before.
+
 **Enrichment is preflighted.** Before any vacancy is queued for the GPU, one
 step asks whether the model server is reachable and the configured model
 installed. Without it, an Ollama that is simply not running became one failed

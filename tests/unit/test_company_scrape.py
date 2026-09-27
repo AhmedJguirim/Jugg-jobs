@@ -356,3 +356,64 @@ class TestModelServerPreflight:
 
         assert result["ok"] is False
         assert "ollama pull" in result["message"]
+
+
+class TestMidRunAbort:
+    """Stopping a run when the model server goes away while it is working.
+
+    The preflight only covers the moment before work is queued. If Ollama dies
+    after that, every vacancy still on the queue takes its turn and spends
+    three retries with backoff discovering the same thing - 156 failures the
+    first time this happened.
+    """
+
+    def test_cancel_queued_cancels_everything_after_the_failure(self, monkeypatch):
+        from dbos import DBOS
+
+        from app.workflows import enrichment
+
+        cancelled = []
+        monkeypatch.setattr(
+            DBOS, "cancel_workflow", lambda wid, **kw: cancelled.append(wid)
+        )
+
+        class Handle:
+            def __init__(self, wid):
+                self.workflow_id = wid
+
+        handles = [Handle(f"wf-{i}") for i in range(5)]
+
+        count = enrichment._cancel_queued(handles, 2)
+
+        assert count == 3
+        assert cancelled == ["wf-2", "wf-3", "wf-4"]
+
+    def test_nothing_is_cancelled_when_the_failure_is_the_last_one(self, monkeypatch):
+        from dbos import DBOS
+
+        from app.workflows import enrichment
+
+        monkeypatch.setattr(DBOS, "cancel_workflow", lambda wid, **kw: None)
+
+        class Handle:
+            workflow_id = "wf-0"
+
+        assert enrichment._cancel_queued([Handle()], 1) == 0
+
+    def test_an_already_finished_workflow_does_not_break_the_sweep(self, monkeypatch):
+        """Cancelling a workflow that has just completed must not stop the rest."""
+        from dbos import DBOS
+
+        from app.workflows import enrichment
+
+        def flaky(wid, **kw):
+            if wid == "wf-0":
+                raise RuntimeError("already finished")
+
+        monkeypatch.setattr(DBOS, "cancel_workflow", flaky)
+
+        class Handle:
+            def __init__(self, wid):
+                self.workflow_id = wid
+
+        assert enrichment._cancel_queued([Handle("wf-0"), Handle("wf-1")], 0) == 1
