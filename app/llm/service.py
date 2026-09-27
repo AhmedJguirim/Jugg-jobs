@@ -403,18 +403,90 @@ def _score_to_verdict(score: int) -> str:
     return "irrelevant"
 
 
+class AssessmentUnparseable(ValueError):
+    """The model never produced JSON we could read, even after repair."""
+
+
+def _close_truncated_json(text: str) -> Optional[dict]:
+    """Rescue an object that was cut off mid-write.
+
+    About one assessment in two hundred runs to the token ceiling: the model
+    falls into a repetition loop and the reply ends mid-string, so the JSON has
+    no closing brace. The fields it had already finished - which include
+    fit_score and verdict, written first - are perfectly good, and throwing them
+    away costs 20 seconds of GPU to produce something no better.
+
+    So: drop the unterminated tail, then close whatever brackets are still open.
+    Returns None when there is nothing recoverable.
+    """
+    start = text.find("{")
+    if start == -1:
+        return None
+    body = text[start:]
+
+    # Walk the text tracking structure, remembering the last point at which the
+    # object was syntactically complete enough to truncate cleanly.
+    stack: list[str] = []
+    in_string = False
+    escaped = False
+    cut = None
+
+    for index, char in enumerate(body):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+        elif char == '"':
+            in_string = True
+        elif char in "{[":
+            stack.append("}" if char == "{" else "]")
+        elif char in "}]":
+            if stack:
+                stack.pop()
+        elif char == "," and not stack[1:]:
+            # A comma at the top level of the object: everything before it is a
+            # complete set of key/value pairs.
+            cut = index
+
+    if in_string or stack:
+        if cut is None:
+            return None
+        candidate = body[:cut] + "}"
+    else:
+        candidate = body
+
+    try:
+        parsed = json.loads(candidate)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
 def _parse_assessment(payload: str) -> dict:
-    """Parse the model's JSON, tolerating surrounding text."""
+    """Parse the model's JSON, tolerating surrounding text and truncation."""
     text = _clean_output(payload)
     try:
         return json.loads(text)
     except json.JSONDecodeError:
         pass
+
     # Fall back to the outermost object in the response.
     match = re.search(r"\{.*\}", text, re.DOTALL)
     if match:
-        return json.loads(match.group(0))
-    raise ValueError("no JSON object in model output")
+        try:
+            return json.loads(match.group(0))
+        except json.JSONDecodeError:
+            pass
+
+    salvaged = _close_truncated_json(text)
+    if salvaged is not None:
+        log.info("assessment JSON was truncated; salvaged %s field(s)", len(salvaged))
+        return salvaged
+
+    raise AssessmentUnparseable("no JSON object in model output")
 
 
 def assess_job(
@@ -469,10 +541,14 @@ def assess_job(
     )
 
     repaired = False
+    truncated = result.output_tokens and result.output_tokens >= 1400
     try:
         data = _parse_assessment(result.content)
     except (ValueError, json.JSONDecodeError):
-        log.warning("assessment JSON unparseable, attempting one repair")
+        log.warning(
+            "assessment JSON unparseable%s, attempting one repair",
+            " (output hit the token ceiling)" if truncated else "",
+        )
         repair = chat(
             json_repair_messages(result.content),
             model=model,

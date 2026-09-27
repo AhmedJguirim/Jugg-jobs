@@ -561,3 +561,63 @@ class TestEligibilityTiers:
 
         assert result.offers_sponsorship is True
         assert result.eligibility == "relocation"
+
+
+class TestTruncatedAssessments:
+    """Recovering an assessment that was cut off mid-write.
+
+    About one reply in two hundred runs to the token ceiling: the model falls
+    into a repetition loop and the JSON ends unterminated. fit_score and verdict
+    are written first, so they are usually intact and worth keeping - redoing
+    the call costs 20 seconds of GPU for no better answer.
+    """
+
+    def test_truncated_mid_string_keeps_the_finished_fields(self, monkeypatch, profile):
+        monkeypatch.setattr(
+            service,
+            "chat",
+            FakeLlm('{"fit_score": 82, "verdict": "strong_match", "summary": "This role invol'),
+        )
+
+        result = assess_job(**CORE_JOB, profile=profile)
+
+        assert result.fit_score == 82
+        assert result.verdict == "strong_match"
+
+    def test_truncated_mid_array_keeps_the_finished_fields(self, monkeypatch, profile):
+        monkeypatch.setattr(
+            service,
+            "chat",
+            FakeLlm('{"fit_score": 90, "verdict": "strong_match", "red_flags": ["needs Dut'),
+        )
+
+        assert assess_job(**CORE_JOB, profile=profile).fit_score == 90
+
+    def test_a_repetition_loop_is_still_salvaged(self, monkeypatch, profile):
+        monkeypatch.setattr(
+            service,
+            "chat",
+            FakeLlm('{"fit_score": 60, "verdict": "possible", "summary": "a a a a a a a a'),
+        )
+
+        assert assess_job(**CORE_JOB, profile=profile).verdict == "possible"
+
+    def test_salvage_returns_none_when_there_is_no_object(self):
+        assert service._close_truncated_json("I cannot assess this vacancy.") is None
+
+    def test_a_reply_with_no_json_raises_a_typed_error(self, monkeypatch, profile):
+        """Typed, so the workflow can leave the vacancy ungraded rather than die."""
+        monkeypatch.setattr(
+            service, "chat", FakeLlm("I cannot assess this.", "Still cannot.")
+        )
+
+        with pytest.raises(service.AssessmentUnparseable):
+            assess_job(**CORE_JOB, profile=profile)
+
+    def test_a_complete_reply_is_untouched_by_the_salvage_path(self, monkeypatch, profile):
+        monkeypatch.setattr(service, "chat", FakeLlm(valid_assessment(fit_score=88)))
+
+        result = assess_job(**CORE_JOB, profile=profile)
+
+        assert result.fit_score == 88
+        assert result.summary != ""

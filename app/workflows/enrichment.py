@@ -29,6 +29,7 @@ from dbos import DBOS
 from app.db.session import session_scope
 from app.integrations.nvb import fetch_jobs_page, to_job_creates
 from app.llm import assess_job, load_profile, translate_text, translate_title
+from app.llm.service import AssessmentUnparseable
 from app.llm.prompts import ASSESSMENT_PROMPT_VERSION, TRANSLATION_PROMPT_VERSION
 from app.logging_setup import log
 from app.repositories import enrichment as enrichment_repo
@@ -245,16 +246,25 @@ def assess_step(prepared: dict, english_text: str, profile_name: str) -> dict:
     the profile in the same language the profile is written in.
     """
     profile = load_profile(profile_name)
-    result = assess_job(
-        title=prepared["title"],
-        description=english_text or prepared["text"],
-        profile=profile,
-        company=prepared["company"],
-        location=prepared["location"],
-        salary=prepared["salary"],
-        contract=prepared["contract"],
-        education=prepared["education"],
-    )
+    try:
+        result = assess_job(
+            title=prepared["title"],
+            description=english_text or prepared["text"],
+            profile=profile,
+            company=prepared["company"],
+            location=prepared["location"],
+            salary=prepared["salary"],
+            contract=prepared["contract"],
+            education=prepared["education"],
+        )
+    except AssessmentUnparseable as error:
+        # About one reply in two hundred is unreadable even after a repair and
+        # a salvage attempt. Losing the whole vacancy over it would also throw
+        # away the translation, which is the expensive half. Leave it ungraded:
+        # it stays pending and the next run tries again, and because the model
+        # is sampled the retry usually succeeds.
+        log.warning("job %s: could not read an assessment from the model (%s)", prepared["job_id"], error)
+        return {}
     return {
         "fit_score": result.fit_score,
         "verdict": result.verdict,
@@ -394,8 +404,24 @@ def enrich_job_workflow(
     english = (translation or {}).get("description") or prepared["existing_translation"]
 
     assessment: Optional[dict] = None
+    assessment_failed = False
     if force or prepared["needs_assessment"]:
-        assessment = assess_step(prepared, english or "", profile_name)
+        # An empty dict means the model's reply could not be read; the vacancy
+        # stays ungraded rather than the workflow failing.
+        assessment = assess_step(prepared, english or "", profile_name) or None
+        assessment_failed = assessment is None
+
+    if assessment_failed:
+        # Not "up to date": it is ungraded, and saying so is what makes the
+        # next run pick it up rather than reporting a clean pass.
+        log.info("enrich: job %s left ungraded, the reply could not be read", job_id)
+        return {
+            "job_id": job_id,
+            "status": "assessment_unreadable",
+            "translated": translation is not None,
+            "assessed": False,
+            "gpu_ms": (translation or {}).get("duration_ms", 0),
+        }
 
     if translation is None and assessment is None:
         log.info("enrich: job %s already current, GPU not used", job_id)

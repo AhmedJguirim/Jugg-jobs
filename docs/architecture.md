@@ -284,6 +284,15 @@ Measured on a real runaway: 287 of 298 children cancelled, the queue drained to
 zero and the GPU went idle. Whatever was stored before the cancel stays stored,
 because pages commit as they are fetched.
 
+**An unreadable reply costs one vacancy's grade, not the vacancy.** About one
+assessment in two hundred runs to the token ceiling - the model falls into a
+repetition loop and the JSON ends unterminated. The finished fields are kept by
+closing the truncated object (`fit_score` and `verdict` are written first, so
+they usually survive). If even that fails, `assess_step` returns nothing and the
+vacancy stays ungraded with status `assessment_unreadable`: the translation is
+already banked, and the next run retries a sampled call that usually succeeds.
+Failing the workflow instead would have thrown away the expensive half.
+
 **Enrichment is preflighted.** Before any vacancy is queued for the GPU, one
 step asks whether the model server is reachable and the configured model
 installed. Without it, an Ollama that is simply not running became one failed
