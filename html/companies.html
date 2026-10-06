@@ -92,7 +92,7 @@
 
       <!-- ── Filters ────────────────────────────────────────────────── -->
       <section class="rounded-lg border border-ink-border bg-ink-raised p-4 mb-6">
-        <div class="grid gap-4 lg:grid-cols-[minmax(0,2fr)_repeat(2,minmax(0,1fr))]">
+        <div class="grid gap-4 lg:grid-cols-[minmax(0,2fr)_repeat(3,minmax(0,1fr))]">
           <div>
             <label class="block text-[11px] uppercase tracking-wider text-fg-muted mb-1">Search</label>
             <input
@@ -123,6 +123,13 @@
               <option value="recent">Most recent posting</option>
             </select>
           </div>
+          <div>
+            <label for="scraped-before" class="block text-[11px] uppercase tracking-wider text-fg-muted mb-1">
+              Last scraped before
+            </label>
+            <input id="scraped-before" type="date" x-model="filters.scraped_before" @change="page = 0"
+                   class="w-full bg-ink border border-ink-border rounded-md px-3 py-2 text-sm focus:outline-none focus:border-splice/70 [color-scheme:dark]" />
+          </div>
         </div>
 
         <div class="flex flex-wrap items-center gap-x-5 gap-y-2 mt-4 text-sm">
@@ -130,11 +137,66 @@
             <input type="checkbox" x-model="filters.has_jobs" @change="page = 0" class="accent-splice" />
             <span>Only employers with ingested vacancies</span>
           </label>
+          <label x-show="filters.scraped_before" class="flex items-center gap-2 cursor-pointer select-none">
+            <input type="checkbox" x-model="filters.include_never_scraped" @change="page = 0" class="accent-splice" />
+            <span>Include never scraped</span>
+          </label>
           <span x-show="runningScrapes" class="text-cyan"
                 x-text="runningScrapes + ' scrape(s) running - grading stays queued one at a time'"></span>
           <button @click="reset()" class="ml-auto text-fg-muted hover:text-fg underline underline-offset-2">
             Reset
           </button>
+        </div>
+      </section>
+
+      <!-- ── Batch scrape ───────────────────────────────────────────── -->
+      <section class="rounded-lg border border-ink-border bg-ink-raised p-4 mb-6">
+        <div class="flex flex-wrap items-center gap-3 text-sm">
+          <span class="font-semibold">Batch scrape</span>
+          <span class="text-fg-muted">the first</span>
+          <input type="number" min="1" :max="maxBatch" x-model.number="batchCount" aria-label="How many employers"
+                 class="w-20 bg-ink border border-ink-border rounded-md px-2 py-1.5 text-sm tabular-nums focus:outline-none focus:border-splice/70" />
+          <span class="text-fg-muted" x-text="`of the ${total} employers listed below`"></span>
+          <button @click="startBatch()" :disabled="batchBusy || !total || !(batchCount >= 1)"
+                  class="px-3 py-1.5 rounded-md bg-splice/15 border border-splice/50 text-splice hover:bg-splice/25 disabled:opacity-40 disabled:hover:bg-splice/15 transition"
+                  x-text="`Scrape ${Math.min(batchCount || 0, total, maxBatch)}`"></button>
+          <span x-show="batchError" class="text-danger" x-text="batchError"></span>
+        </div>
+        <p x-show="!batch" class="text-xs text-fg-muted mt-2">
+          Uses the filters and sort above, top of the list first. Each employer runs the same scrape as
+          its own button; grading still goes one vacancy at a time.
+        </p>
+
+        <div x-show="batch" class="mt-4 border-t border-ink-border pt-3">
+          <div class="flex flex-wrap items-center gap-3 text-sm">
+            <span class="font-semibold tabular-nums"
+                  x-text="`${batchFinished} of ${batch?.counts?.total ?? batch?.companies?.length ?? 0} employers finished`"></span>
+            <span class="text-fg-muted" x-text="batchStatusLabel"></span>
+            <button x-show="batchBusy" @click="cancelBatch()"
+                    class="ml-auto px-3 py-1.5 rounded-md border border-danger/50 text-danger hover:bg-danger/10 transition">
+              Cancel batch
+            </button>
+            <button x-show="!batchBusy" @click="dismissBatch()"
+                    class="ml-auto text-fg-muted hover:text-fg underline underline-offset-2">
+              Dismiss
+            </button>
+          </div>
+          <div class="h-1.5 rounded-full bg-ink-border overflow-hidden mt-2">
+            <div class="h-full bg-splice transition-all duration-500"
+                 :style="`width: ${batchPercent}%`"></div>
+          </div>
+          <ol class="mt-3 space-y-1 text-sm">
+            <template x-for="(row, index) in batch?.companies || []" :key="row.id">
+              <li class="flex items-baseline gap-2" :data-batch-company="row.id">
+                <span class="w-6 shrink-0 text-right text-fg-muted tabular-nums" x-text="index + 1"></span>
+                <span class="w-2 h-2 shrink-0 rounded-full self-center" :class="batchDot(row)"></span>
+                <span class="font-medium truncate max-w-[40%]" x-text="row.name"></span>
+                <span class="text-fg-muted">-</span>
+                <span class="truncate" :class="row.problem ? 'text-danger' : (row.state === 'running' ? 'text-cyan' : 'text-fg-muted')"
+                      x-text="row.label || 'waiting for a free slot'"></span>
+              </li>
+            </template>
+          </ol>
         </div>
       </section>
 
@@ -378,7 +440,15 @@
           scrapes: {},
           soundEnabled: true,
           audioContext: null,
-          filters: { q: "", province: "", has_jobs: false, order_by: "name" },
+          filters: {
+            q: "", province: "", has_jobs: false, order_by: "name",
+            scraped_before: "", include_never_scraped: true,
+          },
+          // One batch at a time: { workflow_id, status, companies, counts }.
+          batch: null,
+          batchCount: 10,
+          batchError: "",
+          maxBatch: 50,
 
           get offset() {
             return this.page * this.limit;
@@ -392,6 +462,9 @@
             this.$watch("filters", () => this.load(), { deep: true });
             this.$watch("page", () => this.load());
             await this.load();
+            // A batch runs for hours; pick it back up after a reload.
+            const saved = this.savedBatchId();
+            if (saved) this.trackBatch(saved, false);
           },
 
           async loadFacets() {
@@ -414,6 +487,10 @@
             if (this.filters.q) params.set("q", this.filters.q);
             if (this.filters.province) params.set("province", this.filters.province);
             if (this.filters.has_jobs) params.set("has_jobs", "true");
+            if (this.filters.scraped_before) {
+              params.set("scraped_before", this.scrapedBeforeIso());
+              params.set("include_never_scraped", this.filters.include_never_scraped);
+            }
 
             try {
               const response = await fetch(`/api/companies?${params}`);
@@ -669,7 +746,184 @@
 
           reset() {
             this.page = 0;
-            this.filters = { q: "", province: "", has_jobs: false, order_by: "name" };
+            this.filters = {
+              q: "", province: "", has_jobs: false, order_by: "name",
+              scraped_before: "", include_never_scraped: true,
+            };
+          },
+
+          // The date input gives a local calendar day; "before 28/09" means
+          // before local midnight starting that day, sent as an instant.
+          scrapedBeforeIso() {
+            return new Date(`${this.filters.scraped_before}T00:00:00`).toISOString();
+          },
+
+          // --- batch scrape ------------------------------------------------
+
+          get batchBusy() {
+            return !!this.batch && ["PENDING", "ENQUEUED"].includes(this.batch.status);
+          },
+
+          get batchFinished() {
+            const c = (this.batch && this.batch.counts) || {};
+            return (c.done || 0) + (c.failed || 0) + (c.cancelled || 0);
+          },
+
+          get batchPercent() {
+            const total = (this.batch && this.batch.counts && this.batch.counts.total) || 0;
+            return total ? Math.round((this.batchFinished / total) * 100) : 0;
+          },
+
+          get batchStatusLabel() {
+            if (!this.batch) return "";
+            if (this.batch.cancelling) return "cancelling…";
+            return {
+              PENDING: "running",
+              ENQUEUED: "starting",
+              SUCCESS: "all done",
+              CANCELLED: "cancelled - what was already found is kept",
+              ERROR: "failed - see the logs",
+            }[this.batch.status] || this.batch.status.toLowerCase();
+          },
+
+          batchDot(row) {
+            if (row.problem || row.state === "failed") return "bg-danger";
+            return {
+              waiting: "bg-ink-border",
+              running: "bg-cyan animate-pulse",
+              done: "bg-ok",
+              cancelled: "bg-fg-muted",
+            }[row.state] || "bg-ink-border";
+          },
+
+          savedBatchId() {
+            try {
+              return localStorage.getItem("scrapeBatch");
+            } catch (error) {
+              return null;
+            }
+          },
+
+          saveBatchId(id) {
+            try {
+              if (id) localStorage.setItem("scrapeBatch", id);
+              else localStorage.removeItem("scrapeBatch");
+            } catch (error) {
+              /* resuming after a reload simply will not work */
+            }
+          },
+
+          async startBatch() {
+            if (this.batchBusy) return;
+            // Unlock audio now, while there is a user gesture; the finish
+            // sound comes long after it.
+            this.ensureAudio();
+            this.batchError = "";
+            const body = {
+              count: Math.min(this.batchCount, this.maxBatch),
+              order_by: this.filters.order_by,
+              include_never_scraped: this.filters.include_never_scraped,
+            };
+            if (this.filters.q) body.q = this.filters.q;
+            if (this.filters.province) body.province = this.filters.province;
+            if (this.filters.has_jobs) body.has_jobs = true;
+            if (this.filters.scraped_before) body.scraped_before = this.scrapedBeforeIso();
+
+            try {
+              const response = await fetch("/api/companies/scrape-batch", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body),
+              });
+              if (!response.ok) {
+                const detail = await response.json().catch(() => ({}));
+                throw new Error(typeof detail.detail === "string" ? detail.detail : `HTTP ${response.status}`);
+              }
+              const started = await response.json();
+              this.batch = {
+                workflow_id: started.workflow_id,
+                status: "ENQUEUED",
+                companies: started.companies.map((c) => ({ ...c, state: "waiting", label: "" })),
+                counts: { total: started.companies.length },
+              };
+              this.saveBatchId(started.workflow_id);
+              this.trackBatch(started.workflow_id, true);
+            } catch (error) {
+              this.batchError = "could not start: " + error.message;
+            }
+          },
+
+          async trackBatch(workflowId, announce) {
+            // `announce` is false when resuming after a reload: a batch that had
+            // already finished should not chime again.
+            for (;;) {
+              let body;
+              try {
+                const response = await fetch(`/api/companies/scrape-batch/${workflowId}`);
+                if (response.status === 404) {
+                  this.saveBatchId(null);
+                  this.batch = null;
+                  return;
+                }
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                body = await response.json();
+              } catch (error) {
+                await new Promise((resolve) => setTimeout(resolve, 3000));
+                continue;
+              }
+
+              const before = new Map(((this.batch && this.batch.companies) || []).map((c) => [c.id, c.state]));
+              this.batch = { ...body, cancelling: this.batch && this.batch.cancelling && body.status === "PENDING" };
+              this.syncBatchRows(body.companies, before);
+
+              if (!["PENDING", "ENQUEUED"].includes(body.status)) {
+                if (announce && body.status === "SUCCESS") {
+                  const allFailed = body.counts.done === 0 && body.counts.total > 0;
+                  allFailed ? this.playFailure() : this.playSuccess();
+                } else if (announce && body.status === "ERROR") {
+                  this.playFailure();
+                }
+                return;
+              }
+              announce = true;
+              await new Promise((resolve) => setTimeout(resolve, 2000));
+            }
+          },
+
+          // Mirror each batch employer into the per-row scrape state, so the
+          // list rows and the drawer show the same progress (and a single
+          // Scrape button cannot start a second run of the same employer).
+          syncBatchRows(companies, before) {
+            for (const row of companies) {
+              const active = row.state === "waiting" || row.state === "running";
+              this.setScrape(row.id, {
+                running: active,
+                status: row.label,
+                error: row.problem,
+                workflowId: row.workflow_id,
+                // The drawer's Cancel sets this for the single-scrape poller;
+                // for a batch row the batch poll reports it, so clear it here
+                // or a later single scrape of this employer reads it as its own.
+                cancelled: false,
+              });
+              const wasActive = ["waiting", "running", undefined].includes(before.get(row.id));
+              if (!active && wasActive) this.refreshCompany(row.id);
+            }
+          },
+
+          async cancelBatch() {
+            if (!this.batch) return;
+            this.batch = { ...this.batch, cancelling: true };
+            try {
+              await fetch(`/api/companies/scrape/${this.batch.workflow_id}/cancel`, { method: "POST" });
+            } catch (error) {
+              this.batchError = "could not cancel: " + error.message;
+            }
+          },
+
+          dismissBatch() {
+            this.batch = null;
+            this.saveBatchId(null);
           },
 
           fitColor(score) {

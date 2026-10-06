@@ -1,21 +1,28 @@
-"""Read-only API behind the companies browser.
+"""API behind the companies browser: listing, detail, and starting scrapes.
 
 Paginated server-side, unlike `/api/board`: there are 3000+ employers, which is
 past the point where shipping the whole table to the browser and filtering it
 there is reasonable.
+
+A batch scrape (`/api/companies/scrape-batch`) takes the first N employers of
+the listing as currently filtered and sorted, so what gets scraped is exactly
+what the page shows at the top of the list.
 """
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Optional
 
 from dbos import DBOS
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel, Field
 
 from app.config import get_settings
 from app.db.session import session_scope
 from app.repositories import company as company_repo
 from app.repositories.company import CompanyNotFound
+from app.services import scrape_progress
 from app.services.company_scrape import query_for
 from app.workflows import enrichment as flow
 
@@ -69,6 +76,8 @@ def list_companies(
     province: Optional[str] = None,
     has_jobs: Optional[bool] = None,
     has_links: Optional[bool] = None,
+    scraped_before: Optional[datetime] = None,
+    include_never_scraped: bool = True,
     order_by: str = "name",
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
@@ -82,6 +91,8 @@ def list_companies(
         "province": province,
         "has_jobs": has_jobs,
         "has_links": has_links,
+        "scraped_before": scraped_before,
+        "include_never_scraped": include_never_scraped,
     }
 
     try:
@@ -229,3 +240,102 @@ def cancel_scrape(workflow_id: str) -> dict[str, Any]:
 
     DBOS.cancel_workflow(workflow_id, cancel_children=True)
     return {"workflow_id": workflow_id, "status": "CANCELLED"}
+
+
+# ---- scraping several employers ----
+
+
+class BatchScrape(BaseModel):
+    """Scrape the first `count` employers of the listing under these filters.
+
+    The filter fields mirror `GET /api/companies`, so the page sends exactly
+    what it is showing and the batch takes the top of that list.
+    """
+
+    count: int = Field(ge=1, le=flow.MAX_COMPANIES_PER_BATCH)
+    q: Optional[str] = None
+    province: Optional[str] = None
+    has_jobs: Optional[bool] = None
+    scraped_before: Optional[datetime] = None
+    include_never_scraped: bool = True
+    order_by: str = "name"
+    profile: Optional[str] = None
+
+
+@router.post("/api/companies/scrape-batch")
+def start_batch_scrape(body: BatchScrape) -> dict[str, Any]:
+    """Queue a scrape for each of the first `count` matching employers.
+
+    Each one runs the same flow as the single Scrape button. Returns at once
+    with the batch's workflow id and the employers it picked.
+    """
+    profile = body.profile or get_settings().llm_default_profile
+    try:
+        with session_scope() as session:
+            rows = company_repo.browse(
+                session,
+                limit=body.count,
+                offset=0,
+                order_by=body.order_by,
+                profile_name=profile,
+                search=body.q,
+                province=body.province,
+                has_jobs=body.has_jobs or None,
+                scraped_before=body.scraped_before,
+                include_never_scraped=body.include_never_scraped,
+            )
+            companies = [{"id": company.id, "name": company.name} for company, *_ in rows]
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+    if not companies:
+        raise HTTPException(status_code=400, detail="no employer matches these filters")
+
+    handle = DBOS.start_workflow(flow.scrape_companies_workflow, companies, "en", profile)
+    return {"workflow_id": handle.workflow_id, "companies": companies}
+
+
+def _company_progress(batch_id: str, company: dict) -> dict[str, Any]:
+    """Where one employer of a batch has got to."""
+    workflow_id = flow.batch_child_id(batch_id, company["id"])
+    status = DBOS.get_workflow_status(workflow_id)
+    state = scrape_progress.state_of(status.status if status else None)
+    entry: dict[str, Any] = {**company, "workflow_id": workflow_id, "state": state, "problem": False}
+
+    if state == "waiting":
+        entry["label"] = "waiting for a free slot"
+    elif state == "running":
+        progress = DBOS.get_event(workflow_id, flow.PROGRESS_EVENT, timeout_seconds=0)
+        current_state = current_stage = None
+        if progress and progress.get("phase") == "grading" and progress.get("current"):
+            current = DBOS.get_workflow_status(progress["current"])
+            current_state = scrape_progress.state_of(current.status if current else None)
+            current_stage = DBOS.get_event(progress["current"], flow.STAGE_EVENT, timeout_seconds=0)
+        entry["label"] = scrape_progress.running_label(progress, current_state, current_stage)
+        entry["progress"] = progress
+    elif state == "done":
+        result = DBOS.retrieve_workflow(workflow_id).get_result()
+        entry["label"], entry["problem"] = scrape_progress.finished_label(result)
+        entry["result"] = result
+    elif state == "cancelled":
+        entry["label"] = "cancelled - what was already found is kept"
+    else:
+        entry["label"], entry["problem"] = "failed - see the logs", True
+    return entry
+
+
+@router.get("/api/companies/scrape-batch/{batch_id}")
+def batch_scrape_status(batch_id: str) -> dict[str, Any]:
+    """Poll a batch: its own status plus one progress line per employer."""
+    status = DBOS.get_workflow_status(batch_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="batch not found")
+
+    companies = DBOS.get_event(batch_id, "companies", timeout_seconds=0) or []
+    rows = [_company_progress(batch_id, company) for company in companies]
+    return {
+        "workflow_id": batch_id,
+        "status": status.status,
+        "companies": rows,
+        "counts": scrape_progress.batch_summary(rows),
+    }

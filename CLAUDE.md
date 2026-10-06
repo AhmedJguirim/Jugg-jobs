@@ -72,6 +72,8 @@ does not serialise itself; calling it outside a queued workflow breaks the
 guarantee, which is why scripts enqueue rather than invoke.
 
 Page fetching is network-bound and runs on a separate `job-ingest` queue.
+Batch company scrapes run on `company-scrape` (two at a time) and report
+progress through DBOS workflow events (`progress`, `stage`) - ADR-0010.
 
 Three caps bound what one click can cost (`app/workflows/enrichment.py`):
 20 pages walked, 50 *new* vacancies stored, 50 vacancies sent to the GPU.
@@ -121,12 +123,16 @@ Assessments are keyed `(job_id, profile_name)`, so profiles never mix.
 
 - **`register_queues()` must be called AFTER `DBOS.launch()`** — it writes to
   the system database and raises otherwise.
-- **Bump `application_version` in `main.py` when a workflow's step sequence
-  changes.** DBOS replays recovered workflows against current code and aborts
-  with `DBOSUnexpectedStepError` when recorded steps no longer line up.
+- **Bump `APPLICATION_VERSION` in `app/workflows/enrichment.py` when a
+  workflow's step sequence changes** (a `DBOS.set_event` counts as a step).
+  `main.py` and `enrich_jobs.py` both read it. DBOS replays recovered
+  workflows against current code and aborts with `DBOSUnexpectedStepError`
+  when recorded steps no longer line up.
 - **A version bump can wedge the queue.** DBOS only recovers workflows of the
   current version, so a job left `PENDING` by the old one holds the single `llm`
-  slot forever and nothing runs again. `enrich_jobs.py --clear-stuck` fixes it.
+  slot forever and nothing runs again. `enrich_jobs.py --clear-stuck` fixes it
+  for the CLI's own workflows only: the app and the CLI use different SQLite
+  system databases (`dbos_app_starter.sqlite` vs `job_hunt_enrich.sqlite`).
   Symptom: work pending, zero GPU activity, no errors.
 - **Get-or-create runs inside a SAVEPOINT** (`app/repositories/job.py`). Pages
   ingest in parallel and race to create the same company/location/vocabulary

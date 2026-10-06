@@ -123,7 +123,9 @@ class TestFilters:
     def test_raising_the_minimum_score_reduces_the_list(self, app_server: str, board: Page):
         # Wait for the full list to render before counting: reading the count
         # mid-render made this flaky once the corpus grew past 100 vacancies.
-        total = board.request.get(f"{app_server}/api/board").json()["stats"]["total_jobs"]
+        # The default view hides applied and archived vacancies.
+        jobs = board.request.get(f"{app_server}/api/board").json()["jobs"]
+        total = sum(1 for job in jobs if not job["applied_at"] and not job["archived_at"])
         cards = board.locator("ul > li")
         expect(cards).to_have_count(total)
 
@@ -163,3 +165,72 @@ class TestDetailDrawer:
         board.locator("ul > li").first.click()
 
         expect(board.locator("text=How this was produced")).to_be_visible(timeout=10_000)
+
+
+@pytest.fixture
+def unmarked_job(app_server: str, page: Page):
+    """An unmarked vacancy from the real corpus, restored to unmarked afterwards.
+
+    These tests write to the application database, so the finaliser puts the
+    marks back even when an assertion fails.
+    """
+    jobs = page.request.get(f"{app_server}/api/board").json()["jobs"]
+    job = next((j for j in jobs if not j["applied_at"] and not j["archived_at"]), None)
+    if job is None:
+        pytest.skip("no unmarked vacancy to use")
+    yield job
+    page.request.patch(
+        f"{app_server}/api/jobs/{job['id']}/marks", data={"applied": False, "archived": False}
+    )
+
+
+class TestMarks:
+    def test_marking_applied_sets_a_timestamp(self, app_server: str, page: Page, unmarked_job):
+        response = page.request.patch(
+            f"{app_server}/api/jobs/{unmarked_job['id']}/marks", data={"applied": True}
+        )
+
+        assert response.ok
+        assert response.json()["applied_at"] is not None
+        assert response.json()["archived_at"] is None
+
+    def test_mark_shows_up_in_the_board_payload(self, app_server: str, page: Page, unmarked_job):
+        page.request.patch(f"{app_server}/api/jobs/{unmarked_job['id']}/marks", data={"archived": True})
+
+        jobs = page.request.get(f"{app_server}/api/board").json()["jobs"]
+        row = next(j for j in jobs if j["id"] == unmarked_job["id"])
+
+        assert row["archived_at"] is not None
+
+    def test_unknown_job_is_a_404(self, app_server: str, page: Page):
+        response = page.request.patch(f"{app_server}/api/jobs/99999999/marks", data={"applied": True})
+
+        assert response.status == 404
+
+    def test_archiving_from_the_list_hides_the_card(self, board: Page, unmarked_job):
+        card = board.locator(f'li[data-job-id="{unmarked_job["id"]}"]')
+        expect(card).to_be_visible()
+        before = board.locator("ul > li").count()
+
+        card.get_by_role("button", name="Archive").click()
+
+        expect(board.locator("ul > li")).to_have_count(before - 1)
+
+    def test_archived_filter_shows_it_again(self, board: Page, unmarked_job):
+        board.locator(f'li[data-job-id="{unmarked_job["id"]}"]').get_by_role(
+            "button", name="Archive"
+        ).click()
+
+        board.get_by_label("Show", exact=True).select_option("archived")
+
+        card = board.locator(f'li[data-job-id="{unmarked_job["id"]}"]')
+        expect(card.get_by_role("button", name="Unarchive")).to_be_visible()
+
+    def test_mark_applied_button_does_not_open_the_drawer(self, board: Page, unmarked_job):
+        board.get_by_label("Show", exact=True).select_option("all")
+        card = board.locator(f'li[data-job-id="{unmarked_job["id"]}"]')
+
+        card.get_by_role("button", name="Mark applied").click()
+
+        expect(card.get_by_role("button", name="Applied ✓")).to_be_visible()
+        expect(board.get_by_role("button", name="Show Dutch original")).not_to_be_visible()

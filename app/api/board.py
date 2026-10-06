@@ -1,4 +1,4 @@
-"""Read-only API behind the job board view.
+"""API behind the job board view.
 
 Separated from `main.py` so the HTTP surface for the UI has one home and
 `main.py` stays the entrypoint plus workflow wiring.
@@ -8,6 +8,10 @@ the long description bodies, small enough (68 rows today) for the page to filter
 and sort client-side with no round trips. The bodies are fetched per vacancy from
 `/api/jobs/{id}` when one is opened, which keeps the list payload light while the
 detail stays instant enough.
+
+The one write is `PATCH /api/jobs/{id}/marks`: the user's own applied/archived
+marks. Filtering on them is client-side like everything else, so the list
+always carries every vacancy, marked or not (ADR-0009).
 """
 
 from __future__ import annotations
@@ -15,6 +19,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import func, select
 
 from app.db.models.company import Company
@@ -24,6 +29,8 @@ from app.db.models.location import Location
 from app.config import get_settings
 from app.db.session import session_scope
 from app.repositories import enrichment as enrichment_repo
+from app.repositories import job as job_repo
+from app.repositories.job import JobNotFound
 from app.text import sanitize_description
 
 router = APIRouter(tags=["board"])
@@ -52,6 +59,8 @@ def _job_row(job: Job, assessment: Optional[JobAssessment], translation: Optiona
         "contract": [term.name for term in job.contract_types],
         "categories": [term.name for term in job.categories],
         "url": job.detail_url,
+        "applied_at": job.applied_at.isoformat() if job.applied_at else None,
+        "archived_at": job.archived_at.isoformat() if job.archived_at else None,
         "translated": bool(translation and not translation.skipped),
         "source_language": translation.source_language if translation else None,
         # Enrichment. Absent until the vacancy has been through the GPU queue.
@@ -119,6 +128,8 @@ def board(profile: str | None = None) -> dict[str, Any]:
             "verdicts": verdicts,
             "actionable": len(actionable),
             "blocked": sum(1 for r in jobs if r["blocked"]),
+            "applied": sum(1 for r in jobs if r["applied_at"]),
+            "archived": sum(1 for r in jobs if r["archived_at"]),
             "needs_dutch": sum(1 for r in jobs if r["dutch_required"]),
         "needs_sponsorship": sum(1 for r in jobs if r["sponsorship_required"]),
         "eligibility": {
@@ -140,6 +151,30 @@ def board(profile: str | None = None) -> dict[str, Any]:
             "eligibility": ["remote_ok", "relocation", "blocked"],
         },
     }
+
+
+class MarksUpdate(BaseModel):
+    """Omitted fields are left alone; `false` clears a mark."""
+
+    applied: bool | None = None
+    archived: bool | None = None
+
+
+@router.patch("/api/jobs/{job_id}/marks")
+def update_marks(job_id: int, marks: MarksUpdate) -> dict[str, Any]:
+    """Mark a vacancy applied and/or archived, or clear either mark."""
+    try:
+        with session_scope() as session:
+            job = job_repo.set_marks(
+                session, job_id, applied=marks.applied, archived=marks.archived
+            )
+            return {
+                "id": job.id,
+                "applied_at": job.applied_at.isoformat() if job.applied_at else None,
+                "archived_at": job.archived_at.isoformat() if job.archived_at else None,
+            }
+    except JobNotFound:
+        raise HTTPException(status_code=404, detail="job not found")
 
 
 @router.get("/api/jobs/{job_id}")

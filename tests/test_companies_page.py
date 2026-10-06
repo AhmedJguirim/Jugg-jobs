@@ -524,3 +524,61 @@ class TestCancelling:
         expect(page_loaded.get_by_role("button", name="Scrape vacancies")).to_be_visible()
         # Hidden until a scrape is actually running.
         expect(page_loaded.get_by_role("button", name="Cancel")).not_to_be_visible()
+
+
+class TestBatchScrape:
+    """Scraping the first N employers of the filtered list in one go.
+
+    None of these start a batch against the real corpus - that would scrape and
+    grade for real. Starting, progress, cancelling and the finish sound were
+    verified against an isolated instance with a stand-in model server; these
+    guard the contract and the controls.
+    """
+
+    def test_listing_filters_by_last_scraped(self, app_server: str, page: Page):
+        everyone = page.request.get(f"{app_server}/api/companies?limit=1").json()["total"]
+        long_ago = page.request.get(
+            f"{app_server}/api/companies?limit=1&scraped_before=2000-01-01T00:00:00Z"
+            "&include_never_scraped=false"
+        ).json()["total"]
+
+        assert long_ago == 0
+        assert everyone > 0
+
+    def test_zero_employers_is_rejected(self, app_server: str, page: Page):
+        response = page.request.post(f"{app_server}/api/companies/scrape-batch", data={"count": 0})
+
+        assert response.status == 422
+
+    def test_the_batch_size_is_capped(self, app_server: str, page: Page):
+        response = page.request.post(f"{app_server}/api/companies/scrape-batch", data={"count": 51})
+
+        assert response.status == 422
+
+    def test_no_match_starts_nothing(self, app_server: str, page: Page):
+        response = page.request.post(
+            f"{app_server}/api/companies/scrape-batch",
+            data={"count": 5, "q": "zzzz-no-such-employer-zzzz"},
+        )
+
+        assert response.status == 400
+
+    def test_unknown_batch_is_a_404(self, app_server: str, page: Page):
+        response = page.request.get(f"{app_server}/api/companies/scrape-batch/not-a-real-batch")
+
+        assert response.status == 404
+
+    def test_the_page_offers_a_batch_scrape_of_ten(self, page_loaded: Page):
+        expect(page_loaded.get_by_label("How many employers")).to_have_value("10")
+
+    def test_the_button_follows_the_count(self, page_loaded: Page):
+        page_loaded.get_by_label("How many employers").fill("2")
+
+        expect(page_loaded.get_by_role("button", name="Scrape 2", exact=True)).to_be_visible()
+
+    def test_the_date_filter_narrows_the_list(self, page_loaded: Page):
+        """Nothing was scraped before 2000, so leaving out never-scraped empties it."""
+        page_loaded.get_by_label("Last scraped before").fill("2000-01-01")
+        page_loaded.get_by_label("Include never scraped").uncheck()
+
+        expect(page_loaded.locator("text=No employer matches these filters.")).to_be_visible()

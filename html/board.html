@@ -113,7 +113,7 @@
 
       <!-- ── Filters ────────────────────────────────────────────────── -->
       <section class="rounded-lg border border-ink-border bg-ink-raised p-4 mb-6">
-        <div class="grid gap-4 lg:grid-cols-[minmax(0,2fr)_repeat(4,minmax(0,1fr))]">
+        <div class="grid gap-4 lg:grid-cols-[minmax(0,2fr)_repeat(5,minmax(0,1fr))]">
           <div>
             <label class="block text-[11px] uppercase tracking-wider text-fg-muted mb-1">Search</label>
             <input
@@ -157,6 +157,16 @@
               <option value="fit">Best fit</option>
               <option value="posted">Most recent</option>
               <option value="company">Company</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-[11px] uppercase tracking-wider text-fg-muted mb-1">Show</label>
+            <select x-model="filters.marks" aria-label="Show"
+                    class="w-full bg-ink border border-ink-border rounded-md px-3 py-2 text-sm focus:outline-none focus:border-splice/70">
+              <option value="open">Open (not applied or archived)</option>
+              <option value="applied" x-text="`Applied (${markCount('applied_at')})`"></option>
+              <option value="archived" x-text="`Archived (${markCount('archived_at')})`"></option>
+              <option value="all">Everything</option>
             </select>
           </div>
         </div>
@@ -216,6 +226,8 @@
           <li
             @click="open(job)"
             class="group rounded-lg border border-ink-border bg-ink-raised hover:border-splice/50 transition cursor-pointer"
+            :class="job.archived_at && 'opacity-60'"
+            :data-job-id="job.id"
           >
             <div class="flex gap-4 p-4">
               <!-- score -->
@@ -250,6 +262,13 @@
                         class="shrink-0 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border"
                         :class="verdictClass(job.verdict)"
                         x-text="(job.verdict || '').replace('_', ' ')"></span>
+                  <span x-show="job.applied_at"
+                        class="shrink-0 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-lily/15 border border-lily/60 text-lily"
+                        x-text="`applied ${day(job.applied_at)}`"></span>
+                  <span x-show="job.archived_at"
+                        class="shrink-0 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border border-ink-border text-fg-muted">
+                    archived
+                  </span>
                 </div>
 
                 <p class="text-sm text-fg-muted mt-1 flex flex-wrap gap-x-2 gap-y-0.5">
@@ -271,6 +290,20 @@
                           x-text="flag"></span>
                   </template>
                 </div>
+              </div>
+
+              <!-- marks: .stop so a click here does not also open the drawer -->
+              <div class="shrink-0 flex flex-col gap-1.5">
+                <button @click.stop="toggleMark(job, 'applied')" :disabled="!!job._saving"
+                        :aria-pressed="!!job.applied_at"
+                        class="px-2 py-1 text-xs rounded-md border transition disabled:opacity-40"
+                        :class="job.applied_at ? 'bg-lily/15 border-lily/60 text-lily' : 'border-ink-border text-fg-muted hover:border-lily/60 hover:text-lily'"
+                        x-text="job.applied_at ? 'Applied ✓' : 'Mark applied'"></button>
+                <button @click.stop="toggleMark(job, 'archived')" :disabled="!!job._saving"
+                        :aria-pressed="!!job.archived_at"
+                        class="px-2 py-1 text-xs rounded-md border transition disabled:opacity-40"
+                        :class="job.archived_at ? 'border-fg-muted text-fg' : 'border-ink-border text-fg-muted hover:border-fg-muted hover:text-fg'"
+                        x-text="job.archived_at ? 'Unarchive' : 'Archive'"></button>
               </div>
             </div>
           </li>
@@ -322,6 +355,13 @@
                      class="px-3 py-1.5 text-sm rounded-md border border-ink-border hover:border-lily/60 hover:text-lily transition">
                     Apply ↗
                   </a>
+                  <button @click="toggleMark(selected, 'applied')"
+                          class="px-3 py-1.5 text-sm rounded-md border transition"
+                          :class="selected.applied_at ? 'bg-lily/15 border-lily/60 text-lily' : 'border-ink-border hover:border-lily/60 hover:text-lily'"
+                          x-text="selected.applied_at ? `Applied ${day(selected.applied_at)} ✓` : 'Mark applied'"></button>
+                  <button @click="toggleMark(selected, 'archived')"
+                          class="px-3 py-1.5 text-sm rounded-md border border-ink-border hover:border-fg-muted transition"
+                          x-text="selected.archived_at ? 'Unarchive' : 'Archive'"></button>
                   <button @click="tab = tab === 'original' ? 'english' : 'original'"
                           class="px-3 py-1.5 text-sm rounded-md border border-ink-border hover:border-cyan/60 hover:text-cyan transition"
                           x-text="tab === 'english' ? 'Show Dutch original' : 'Show English'"></button>
@@ -498,6 +538,8 @@
             hideDutch: false,
             onlyAssessed: false,
             stack: "",
+            // open | applied | archived | all
+            marks: "open",
           },
 
           async load() {
@@ -535,6 +577,9 @@
             const f = this.filters;
             const needle = f.q.trim().toLowerCase();
             let rows = this.jobs.filter((job) => {
+              if (f.marks === "open" && (job.applied_at || job.archived_at)) return false;
+              if (f.marks === "applied" && !job.applied_at) return false;
+              if (f.marks === "archived" && !job.archived_at) return false;
               if (f.onlyAssessed && !job.assessed) return false;
               if (!f.includeBlocked && job.blocked) return false;
               if (f.hideDutch && job.dutch_required) return false;
@@ -580,7 +625,43 @@
             this.filters = {
               q: "", minScore: 0, city: "", sort: "fit",
               includeBlocked: true, hideDutch: false, onlyAssessed: false, stack: "",
+              marks: "open",
             };
+          },
+
+          markCount(column) {
+            return this.jobs.filter((job) => job[column]).length;
+          },
+
+          // Toggle one mark on the server, then mirror the result into both the
+          // list row and the open drawer - they are separate objects.
+          async toggleMark(job, mark) {
+            const column = `${mark}_at`;
+            const row = this.jobs.find((j) => j.id === job.id);
+            if (row) row._saving = true;
+            try {
+              const response = await fetch(`/api/jobs/${job.id}/marks`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ [mark]: !job[column] }),
+              });
+              if (!response.ok) throw new Error(`HTTP ${response.status}`);
+              const marks = await response.json();
+              for (const target of [row, this.selected]) {
+                if (target && target.id === job.id) {
+                  target.applied_at = marks.applied_at;
+                  target.archived_at = marks.archived_at;
+                }
+              }
+            } catch (error) {
+              alert(`Could not save the mark: ${error.message}`);
+            } finally {
+              if (row) row._saving = false;
+            }
+          },
+
+          day(iso) {
+            return iso ? iso.slice(0, 10) : "";
           },
 
           pct(done, total) {

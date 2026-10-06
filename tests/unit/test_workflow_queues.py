@@ -28,7 +28,7 @@ class TestConcurrencyConstants:
         assert flow.INGEST_WORKER_CONCURRENCY >= 1
 
     def test_queue_names_are_distinct(self):
-        assert flow.LLM_QUEUE != flow.INGEST_QUEUE
+        assert len({flow.LLM_QUEUE, flow.INGEST_QUEUE, flow.COMPANY_QUEUE}) == 3
 
 
 class TestRegisterQueues:
@@ -45,9 +45,14 @@ class TestRegisterQueues:
         flow.register_queues()
         return {call["name"]: call for call in calls}
 
-    def test_registers_both_queues(self, recorded):
+    def test_registers_every_queue(self, recorded):
         assert flow.LLM_QUEUE in recorded
         assert flow.INGEST_QUEUE in recorded
+        assert flow.COMPANY_QUEUE in recorded
+
+    def test_company_queue_never_touches_the_gpu_limit(self, recorded):
+        """Company scrapes only wait on the llm queue; they must not share it."""
+        assert recorded[flow.COMPANY_QUEUE]["worker_concurrency"] == flow.COMPANY_SCRAPE_CONCURRENCY
 
     def test_llm_queue_limits_this_process(self, recorded):
         assert recorded[flow.LLM_QUEUE]["worker_concurrency"] == 1
@@ -68,7 +73,7 @@ class TestRegisterQueues:
         flow.register_queues()
         flow.register_queues()
 
-        assert len(calls) == 2  # two queues, registered once each
+        assert len(calls) == 3  # three queues, registered once each
 
 
 class TestWorkflowsAreRegistered:
@@ -90,3 +95,25 @@ class TestWorkflowsAreRegistered:
     )
     def test_step_exists(self, name: str):
         assert callable(getattr(flow, name))
+
+
+class TestApplicationVersion:
+    """Every process must run workflows under the same DBOS version.
+
+    `enrich_jobs.py --clear-stuck` cancels PENDING workflows of any version but
+    its own, so a copy of the version that lagged behind main.py would cancel
+    healthy work. Both read the one constant instead.
+    """
+
+    @pytest.mark.parametrize("path", ["main.py", "scripts/enrich_jobs.py"])
+    def test_no_hardcoded_version(self, path: str):
+        import os
+        import re
+
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        with open(os.path.join(root, path), encoding="utf-8") as handle:
+            source = handle.read()
+
+        assert not re.search(r'"application_version":\s*"', source), (
+            f"{path} hardcodes application_version; use flow.APPLICATION_VERSION"
+        )

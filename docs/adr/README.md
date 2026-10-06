@@ -17,3 +17,5 @@ Consequences (what this costs us, including what it rules out).
 | [0006](0006-job-schema-normalisation.md) | Vacancy schema: what gets its own table | Accepted |
 | [0007](0007-local-llm-enrichment.md) | Local LLM enrichment on a single GPU | Accepted |
 | [0008](0008-cv-derived-grading-strategy.md) | CV-derived grading strategy with tiered skills | Accepted |
+| [0009](0009-applied-and-archived-marks.md) | Applied and archived marks on vacancies | Accepted |
+| [0010](0010-batch-company-scrape.md) | Batch company scrape with per-employer progress | Accepted |

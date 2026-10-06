@@ -398,6 +398,64 @@ class TestUpdate:
             repo.update(session, 999_999_999, JobUpdate(status="expired"))
 
 
+class TestMarks:
+    def test_new_job_is_unmarked(self, session: Session, job_payload: JobCreate):
+        job = repo.create(session, job_payload)
+
+        assert job.applied_at is None
+        assert job.archived_at is None
+
+    def test_marks_applied(self, session: Session, job_payload: JobCreate):
+        job = repo.create(session, job_payload)
+
+        repo.set_marks(session, job.id, applied=True)
+
+        assert job.applied_at is not None
+        assert job.archived_at is None
+
+    def test_marks_archived(self, session: Session, job_payload: JobCreate):
+        job = repo.create(session, job_payload)
+
+        repo.set_marks(session, job.id, archived=True)
+
+        assert job.archived_at is not None
+        assert job.applied_at is None
+
+    def test_false_clears_a_mark(self, session: Session, job_payload: JobCreate):
+        job = repo.create(session, job_payload)
+        repo.set_marks(session, job.id, applied=True, archived=True)
+
+        repo.set_marks(session, job.id, archived=False)
+
+        assert job.archived_at is None
+        assert job.applied_at is not None
+
+    def test_setting_again_keeps_the_original_timestamp(
+        self, session: Session, job_payload: JobCreate
+    ):
+        job = repo.create(session, job_payload)
+        repo.set_marks(session, job.id, applied=True)
+        first = job.applied_at
+
+        repo.set_marks(session, job.id, applied=True)
+
+        assert job.applied_at == first
+
+    def test_reingest_keeps_the_marks(self, session: Session, job_payload: JobCreate):
+        """The board re-lists vacancies on every search; that must not undo a mark."""
+        job = repo.create(session, job_payload)
+        repo.set_marks(session, job.id, applied=True, archived=True)
+
+        repo.upsert(session, job_payload.model_copy(update={"title": "Senior Python Developer"}))
+
+        assert job.applied_at is not None
+        assert job.archived_at is not None
+
+    def test_missing_job_raises(self, session: Session):
+        with pytest.raises(JobNotFound):
+            repo.set_marks(session, 999_999_999, applied=True)
+
+
 # ---- delete ----
 
 

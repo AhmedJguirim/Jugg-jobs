@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 from sqlalchemy.orm import Session
 
+from app.db.models.company import Company
 from app.repositories import company as repo
 from app.repositories.company import CompanyNotFound, DuplicateCompany
 from app.schemas.company import CompanyCreate, CompanyUpdate
@@ -265,3 +268,49 @@ class TestBulkUpsert:
 
     def test_empty_input_is_a_noop(self, session: Session):
         assert repo.bulk_upsert(session, []) == 0
+
+
+# ---- browse: due for another scrape ----
+
+
+class TestBrowseScrapedBefore:
+    """The filter behind "scrape the first N last scraped before <date>"."""
+
+    CUTOFF = datetime(2026, 9, 28, tzinfo=timezone.utc)
+
+    @pytest.fixture(autouse=True)
+    def companies(self, session: Session):
+        session.add_all(
+            [
+                Company(name="Old", last_scraped_at=self.CUTOFF - timedelta(days=3)),
+                Company(name="Fresh", last_scraped_at=self.CUTOFF + timedelta(hours=1)),
+                Company(name="Never"),
+            ]
+        )
+        session.flush()
+
+    def names(self, session: Session, **filters) -> list[str]:
+        rows = repo.browse(session, limit=10, search=None, **filters)
+        return [company.name for company, *_ in rows if company.name in {"Old", "Fresh", "Never"}]
+
+    def test_keeps_employers_scraped_before_the_cutoff(self, session: Session):
+        assert "Old" in self.names(session, scraped_before=self.CUTOFF)
+
+    def test_drops_employers_scraped_since(self, session: Session):
+        assert "Fresh" not in self.names(session, scraped_before=self.CUTOFF)
+
+    def test_never_scraped_counts_by_default(self, session: Session):
+        assert "Never" in self.names(session, scraped_before=self.CUTOFF)
+
+    def test_never_scraped_can_be_left_out(self, session: Session):
+        names = self.names(session, scraped_before=self.CUTOFF, include_never_scraped=False)
+
+        assert names == ["Old"]
+
+    def test_no_cutoff_means_no_filter(self, session: Session):
+        assert sorted(self.names(session)) == ["Fresh", "Never", "Old"]
+
+    def test_count_agrees_with_the_listing(self, session: Session):
+        count = repo.browse_count(session, scraped_before=self.CUTOFF, include_never_scraped=False, search="Old")
+
+        assert count == 1

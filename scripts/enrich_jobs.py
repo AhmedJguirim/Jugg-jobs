@@ -92,12 +92,12 @@ def _clear_stuck() -> int:
     config: DBOSConfig = {
         "name": "job-hunt-enrich",
         "system_database_url": os.environ.get("DBOS_SYSTEM_DATABASE_URL"),
-        "application_version": "0.2.0",
+        "application_version": flow.APPLICATION_VERSION,
     }
     DBOS(config=config)
     DBOS.launch()
     try:
-        current = "0.2.0"
+        current = flow.APPLICATION_VERSION
         stranded = [
             workflow
             for workflow in DBOS.list_workflows(
@@ -162,9 +162,9 @@ def main(argv: list[str] | None = None) -> int:
     config: DBOSConfig = {
         "name": "job-hunt-enrich",
         "system_database_url": os.environ.get("DBOS_SYSTEM_DATABASE_URL"),
-        # Keep in step with main.py: see the note there on why this is bumped
+        # Shared with main.py: see APPLICATION_VERSION for why it is bumped
         # when a workflow's step sequence changes.
-        "application_version": "0.2.0",
+        "application_version": flow.APPLICATION_VERSION,
     }
     DBOS(config=config)
     DBOS.launch()

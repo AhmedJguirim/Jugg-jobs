@@ -9,6 +9,7 @@ Raises `CompanyNotFound` / `DuplicateCompany` instead of leaking SQLAlchemy
 exceptions, so callers depend on this module rather than on the ORM.
 """
 
+from datetime import datetime
 from typing import Iterable, Optional, Sequence
 
 from sqlalchemy import Select, func, or_, select
@@ -216,6 +217,8 @@ def _browse_query(
     province: Optional[str] = None,
     has_jobs: Optional[bool] = None,
     has_links: Optional[bool] = None,
+    scraped_before: Optional[datetime] = None,
+    include_never_scraped: bool = True,
     profile_name: str = "default",
 ) -> Select:
     """Employers with their vacancy count, best fit score and latest posting.
@@ -223,6 +226,10 @@ def _browse_query(
     LEFT JOINs throughout: the seed file contributed 2901 employers with no
     vacancies of their own, and they are exactly the ones worth browsing for
     their job-board search links.
+
+    `scraped_before` keeps employers last scraped before that moment - the ones
+    due for another look. A never-scraped employer was not scraped after it
+    either, so it counts unless `include_never_scraped` is False.
     """
     best_fit = func.max(JobAssessment.fit_score)
     latest = func.max(Job.start_date)
@@ -245,6 +252,11 @@ def _browse_query(
         query = query.where(Company.google_jobs_link.is_not(None))
     elif has_links is False:
         query = query.where(Company.google_jobs_link.is_(None))
+    if scraped_before is not None:
+        stale = Company.last_scraped_at < scraped_before
+        query = query.where(
+            or_(stale, Company.last_scraped_at.is_(None)) if include_never_scraped else stale
+        )
     if has_jobs is True:
         query = query.having(func.count(func.distinct(Job.id)) > 0)
     elif has_jobs is False:

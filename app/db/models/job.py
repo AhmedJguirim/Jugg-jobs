@@ -14,6 +14,9 @@ What lives where, and why:
   vocabulary, so no lookup table.
 - **`raw`**: the untouched source payload as JSONB, so new fields can be
   back-filled from stored data instead of re-fetching the API.
+- **`applied_at` / `archived_at`**: the user's own marks, set from the board.
+  Timestamps rather than booleans so "when did I apply" is answerable. Not part
+  of `JobCreate`, so re-ingesting a vacancy never clears them. See ADR-0009.
 
 `external_id` + `source` is the natural key: it identifies the vacancy at the
 board it came from and is what makes ingest idempotent. `id` stays a surrogate
@@ -26,6 +29,7 @@ from sqlalchemy import (
     ARRAY,
     Boolean,
     Date,
+    DateTime,
     ForeignKey,
     Index,
     Integer,
@@ -140,6 +144,10 @@ class Job(Base, TimestampMixin):
 
     recruiter_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     reference_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # --- the user's marks, set from the board; NULL means not marked ---
+    applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # --- raw payload, for re-deriving fields without another API call ---
     raw: Mapped[dict | None] = mapped_column(JSONB, nullable=True)

@@ -27,18 +27,18 @@ app = FastAPI()
 config: DBOSConfig = {
     "name": "dbos-app-starter",
     "system_database_url": os.environ.get("DBOS_SYSTEM_DATABASE_URL"),
-    # Bump this whenever a workflow's *shape* changes - a step added, removed
-    # or reordered. DBOS replays a recovered workflow against the current code
-    # and aborts if the recorded steps no longer line up
+    # Bump APPLICATION_VERSION whenever a workflow's *shape* changes - a step
+    # added, removed or reordered. DBOS replays a recovered workflow against the
+    # current code and aborts if the recorded steps no longer line up
     # (DBOSUnexpectedStepError). Changing the enrichment step order under a
     # running scrape killed one that way. A new version leaves in-flight
     # workflows to the old one instead of replaying them against new code.
-    "application_version": "0.2.0",
+    "application_version": enrichment_flow.APPLICATION_VERSION,
     "conductor_key": os.environ.get("DBOS_CONDUCTOR_KEY"),
 }
 DBOS(config=config)
 
-# Read-only APIs behind the views (app/api/).
+# APIs behind the views (app/api/).
 app.include_router(board_router)
 app.include_router(companies_router)
 

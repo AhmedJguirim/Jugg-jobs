@@ -77,6 +77,16 @@ stores what it finds, then translates and grades it. The row reports the result
 and plays a chime when it finishes. Press it on several employers if you like -
 the work queues up rather than piling onto the GPU.
 
+**Many employers at once**: set the filters (e.g. **Last scraped before**
+28/09/2026 - never-scraped employers count too unless you untick them), then in
+**Batch scrape** enter how many and press **Scrape N**. It takes the first N
+rows of the list as filtered and sorted. Each employer gets a progress line -
+`fetching page 2/5`, `vacancy 5/23 - translating the description`, or `waiting
+for the GPU` while another employer's vacancy is on it - and the chime plays
+once, when the whole batch is done. **Cancel batch** stops everything, including
+the grading it queued; what was already stored stays. Reloading the page picks
+the progress back up.
+
 **From the command line**, for a free-text search rather than one employer:
 
 ```shell
@@ -158,6 +168,11 @@ land orange by design.
 Filters worth knowing: set **Stack** to `core stack` and untick **Show blocked**
 to get the list actually worth your time.
 
+Each card has **Mark applied** and **Archive** buttons (also in the detail
+drawer). Marked vacancies drop out of the default **Show: Open** view; switch
+**Show** to `Applied`, `Archived` or `Everything` to see them again. Clicking a
+mark a second time clears it.
+
 ---
 
 ## 4. Changing how vacancies are scored
@@ -225,6 +240,11 @@ version of the code can hold that single slot forever. Clear it:
 
 Then run the enrichment again. This is the fix when `--progress` shows work
 pending but nothing moves for minutes.
+
+Caveat: this only sees work started by `enrich_jobs.py` itself. Work started
+from the web app lives in a different DBOS database (see "Known gaps" in
+`docs/architecture.md`). Before restarting the app on a new version, let its
+current run finish, so nothing is stranded in the first place.
 
 ### Watching what it is doing
 

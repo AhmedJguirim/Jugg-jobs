@@ -12,7 +12,8 @@ database, so starting a second copy of the app (or a stray CLI run) still cannot
 put two jobs on the GPU. `worker_concurrency` alone would only bind one process.
 
 Page fetching is network-bound and safe to parallelise, so it gets its own queue
-with a normal concurrency.
+with a normal concurrency. Batch company scrapes get a third queue, so a batch
+waiting on the GPU never holds the page-fetch slots.
 
 **Why a workflow per vacancy.** Each vacancy is one queued child workflow whose
 steps are checkpointed. A crash, a Ctrl-C, or an Ollama restart mid-run resumes
@@ -24,7 +25,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from dbos import DBOS
+from dbos import DBOS, SetWorkflowID
 
 from app.db.session import session_scope
 from app.integrations.nvb import fetch_jobs_page, to_job_creates
@@ -37,13 +38,40 @@ from app.repositories import job as job_repo
 from app.services.company_scrape import NoSearchQuery, query_for, record_scrape
 from app.text import sanitize_description
 
+# The DBOS application version, shared by every process that runs these
+# workflows (main.py, scripts/enrich_jobs.py). Bump it whenever a workflow's
+# step sequence changes: DBOS replays a recovered workflow against the current
+# code and aborts with DBOSUnexpectedStepError when the recorded steps no longer
+# line up. One constant, because two copies drifted: the script's
+# `--clear-stuck` treats every other version as stranded, so a stale copy there
+# would cancel healthy work.
+#
+# 0.3.0: progress events (`set_event`) in the company scrape and enrichment.
+APPLICATION_VERSION = "0.3.0"
+
 # Queue names. The GPU queue's concurrency is the safety property of this module.
 LLM_QUEUE = "llm"
 INGEST_QUEUE = "job-ingest"
+COMPANY_QUEUE = "company-scrape"
 
 # One at a time. Do not raise these without a second GPU.
 LLM_CONCURRENCY = 1
 INGEST_WORKER_CONCURRENCY = 3
+
+# Companies in a batch scraped at once. Two, not more: the GPU is the
+# bottleneck, so a second company only needs to be fetched and queued while the
+# first is being graded. More would just hit the job board harder for nothing.
+COMPANY_SCRAPE_CONCURRENCY = 2
+
+# Ceiling on one batch. Each company can queue up to MAX_ENRICHED_PER_SCRAPE
+# vacancies for the GPU, so 50 companies is already a very long night.
+MAX_COMPANIES_PER_BATCH = 50
+
+# Workflow events the UI polls for progress. `progress` is set by a company
+# scrape as it moves through its phases; `stage` by one vacancy's enrichment,
+# saying which GPU step it is on.
+PROGRESS_EVENT = "progress"
+STAGE_EVENT = "stage"
 
 # Hard ceiling on how many result pages one scrape will walk.
 #
@@ -99,6 +127,11 @@ def register_queues() -> None:
     DBOS.register_queue(
         INGEST_QUEUE,
         worker_concurrency=INGEST_WORKER_CONCURRENCY,
+        on_conflict="always_update",
+    )
+    DBOS.register_queue(
+        COMPANY_QUEUE,
+        worker_concurrency=COMPANY_SCRAPE_CONCURRENCY,
         on_conflict="always_update",
     )
     _queues_registered = True
@@ -398,6 +431,7 @@ def enrich_job_workflow(
 
     translation: Optional[dict] = None
     if force or prepared["needs_translation"]:
+        DBOS.set_event(STAGE_EVENT, "translating the description")
         translation = translate_step(prepared, target_language)
         # Banked immediately: see persist_translation's docstring.
         persist_translation(job_id, translation)
@@ -406,6 +440,7 @@ def enrich_job_workflow(
     assessment: Optional[dict] = None
     assessment_failed = False
     if force or prepared["needs_assessment"]:
+        DBOS.set_event(STAGE_EVENT, "grading against your profile")
         # An empty dict means the model's reply could not be read; the vacancy
         # stays ungraded rather than the workflow failing.
         assessment = assess_step(prepared, english or "", profile_name) or None
@@ -622,6 +657,15 @@ def company_search_query(company_id: int) -> dict:
         }
 
 
+def _report(phase: str, **fields: Any) -> None:
+    """Publish where a company scrape has got to, for the batch progress view.
+
+    A workflow event rather than a table: it is transient, per workflow, and
+    DBOS already stores it durably next to the workflow it describes.
+    """
+    DBOS.set_event(PROGRESS_EVENT, {"phase": phase, **fields})
+
+
 def _cancel_queued(handles, from_index: int) -> int:
     """Cancel the enrichment workflows that have not started yet.
 
@@ -748,6 +792,7 @@ def scrape_company_workflow(
     log.info("company %s (%s): scraping query %r", company_id, resolved.get("name"), query)
 
     # --- scrape every page ---
+    _report("fetching", page=1, pages=None, found=0)
     first = fetch_page(query, 1, limit)
     total_pages = int(first.get("pages") or 1)
 
@@ -780,6 +825,7 @@ def scrape_company_workflow(
         if hit_vacancy_cap:
             break
         remaining = MAX_NEW_VACANCIES_PER_SCRAPE - created
+        _report("fetching", page=page, pages=last_page, found=len(job_ids))
         result = store_page(fetch_page(query, page, limit), remaining)
         job_ids.extend(result["job_ids"])
         created += result["created"]
@@ -824,6 +870,7 @@ def scrape_company_workflow(
         return summary
 
     # --- enrich, strictly one model at a time ---
+    _report("checking the model server", found=len(job_ids))
     health = llm_available()
     if not health["ok"]:
         summary["enrich_status"] = "llm_unavailable"
@@ -867,6 +914,9 @@ def scrape_company_workflow(
 
     enriched = failed = 0
     for index, handle in enumerate(handles):
+        # Children finish in queue order, so the one awaited is the one on (or
+        # next for) the GPU; the UI reads its `stage` event through this id.
+        _report("grading", done=index, total=len(handles), current=handle.workflow_id)
         try:
             result = handle.get_result()
             enriched += result.get("status") == "enriched"
@@ -897,4 +947,74 @@ def scrape_company_workflow(
     summary["enriched"] = enriched
     summary["failed"] = failed
     log.info("company scrape done: %s", summary)
+    return summary
+
+
+# ---------------------------------------------------------------------------
+# Batch company scrape
+# ---------------------------------------------------------------------------
+
+
+def batch_child_id(batch_id: str, company_id: int) -> str:
+    """The workflow id of one company's scrape inside a batch.
+
+    Deterministic, so the status endpoint can find each company's workflow
+    from the batch id alone, before or after it has started.
+    """
+    return f"{batch_id}-company-{company_id}"
+
+
+@DBOS.workflow()
+def scrape_companies_workflow(
+    companies: list[dict],
+    target_language: str = "en",
+    profile_name: str = "default",
+) -> dict:
+    """Scrape several employers - the same flow as one - and wait for them all.
+
+    `companies` is `[{"id": ..., "name": ...}]`, chosen by the caller. Each is
+    one `scrape_company_workflow` on COMPANY_QUEUE, so at most
+    COMPANY_SCRAPE_CONCURRENCY run at once, and their grading still goes
+    through the single-slot `llm` queue like any other scrape.
+
+    Cancelling this workflow with `cancel_children=True` stops every company
+    scrape still waiting or running, and the vacancies they queued for the GPU.
+    """
+    batch_id = DBOS.workflow_id
+    DBOS.set_event("companies", companies)
+    log.info("batch %s: scraping %s companies", batch_id, len(companies))
+
+    handles = []
+    for company in companies:
+        with SetWorkflowID(batch_child_id(batch_id, company["id"])):
+            handles.append(
+                DBOS.enqueue_workflow(
+                    COMPANY_QUEUE,
+                    scrape_company_workflow,
+                    company["id"],
+                    50,
+                    None,
+                    target_language,
+                    profile_name,
+                    True,
+                )
+            )
+
+    results = []
+    for company, handle in zip(companies, handles):
+        try:
+            results.append(handle.get_result())
+        except Exception as error:  # one employer must not sink the batch
+            log.warning("batch %s: company %s did not finish: %s", batch_id, company["id"], error)
+            results.append({"company_id": company["id"], "status": "failed", "error": str(error)})
+
+    summary = {
+        "companies": len(companies),
+        "done": sum(1 for r in results if r.get("status") == "done"),
+        "failed": sum(1 for r in results if r.get("status") != "done"),
+        "vacancies": sum(r.get("vacancies", 0) for r in results),
+        "created": sum(r.get("created", 0) for r in results),
+        "enriched": sum(r.get("enriched", 0) for r in results),
+    }
+    log.info("batch %s done: %s", batch_id, summary)
     return summary

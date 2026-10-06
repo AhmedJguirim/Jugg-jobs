@@ -8,6 +8,7 @@ classifier titles). That fan-out is this module's job: callers pass plain
 values in a `JobCreate` and never deal with foreign keys.
 """
 
+from datetime import datetime, timezone
 from typing import Iterable, Optional, Sequence, Type
 
 from sqlalchemy import Select, and_, func, or_, select
@@ -433,6 +434,31 @@ def update(session: Session, job_id: int, payload: JobUpdate) -> Job:
     job = get_or_404(session, job_id)
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(job, field, value)
+    session.flush()
+    return job
+
+
+def set_marks(
+    session: Session,
+    job_id: int,
+    *,
+    applied: Optional[bool] = None,
+    archived: Optional[bool] = None,
+) -> Job:
+    """Mark a vacancy applied and/or archived, or clear either mark.
+
+    `None` leaves a mark as it is. Setting a mark that is already set keeps its
+    original timestamp, so a double click does not move "applied on" forward.
+    """
+    job = get_or_404(session, job_id)
+    now = datetime.now(timezone.utc)
+    for column, wanted in (("applied_at", applied), ("archived_at", archived)):
+        if wanted is None:
+            continue
+        if not wanted:
+            setattr(job, column, None)
+        elif getattr(job, column) is None:
+            setattr(job, column, now)
     session.flush()
     return job
 

@@ -55,9 +55,9 @@ Supporting trees, outside the runtime path:
 | `app/db/models/` | ORM models; `__init__` is the registry Alembic reads |
 | `app/schemas/` | DTOs for companies and vacancies + normalisation |
 | `app/repositories/` | CRUD; raises domain errors, never commits |
-| `app/services/` | Flow layer: job ingest, per-company scrape query resolution |
-| `app/api/board.py` | Read-only HTTP API behind the job board view |
-| `app/api/companies.py` | Read-only HTTP API behind the employers browser |
+| `app/services/` | Flow layer: job ingest, per-company scrape query resolution, batch progress lines |
+| `app/api/board.py` | HTTP API behind the job board view; its one write sets applied/archived marks |
+| `app/api/companies.py` | HTTP API behind the employers browser: listing, detail, single and batch scrapes |
 | `html/board.html` | The job board: Tailwind + Alpine, served at `/board` |
 | `html/companies.html` | The employers browser, served at `/companies` |
 | `app/workflows/` | DBOS workflows/steps; registers the `llm` and `job-ingest` queues |
@@ -160,7 +160,7 @@ and summary, its fit score, and the dealbreakers that block it. Tailwind and
 Alpine come from CDNs and the page is a single static file - no build step, which
 keeps it consistent with the existing `html/app.html`.
 
-Two endpoints back it:
+Three endpoints back it:
 
 - `GET /api/board` - the whole corpus without the long description bodies, small
   enough (68 rows) for the page to filter and sort client-side with no round
@@ -168,11 +168,15 @@ Two endpoints back it:
 - `GET /api/jobs/{id}` - one vacancy including both texts: the English
   translation and the *sanitised* original, which is what the model actually
   read, so a suspect translation can be checked against its input.
+- `PATCH /api/jobs/{id}/marks` - mark a vacancy **applied** or **archived**
+  (or clear either). Stored as `jobs.applied_at` / `jobs.archived_at`; the
+  board hides marked vacancies by default and its **Show** filter brings back
+  applied, archived or everything. Ingest never clears a mark. See ADR-0009.
 
 `/companies` browses all 3017 employers. Unlike the board it paginates
 **server-side**: 3000+ rows is past the point where shipping the table to the
 browser is reasonable, so `/api/companies` takes `q`, `province`, `has_jobs`,
-`order_by`, `limit` and `offset`, and `/api/companies/{id}` returns one employer
+`scraped_before` (+ `include_never_scraped`), `order_by`, `limit` and `offset`, and `/api/companies/{id}` returns one employer
 with its vacancies.
 
 The employer list has two distinct origins, which the UI labels:
@@ -276,6 +280,18 @@ employer's. The cap bounds the time, bandwidth and GPU one click can cost, and
 the result reports `pages_available` and `truncated` so the UI can say the
 search was broader than we walked.
 
+**Several employers can be scraped as one batch.** `POST
+/api/companies/scrape-batch` takes a count plus the listing's own filters and
+sort, and scrapes the top of that list - e.g. the first 10 last scraped before a
+date. `scrape_companies_workflow` enqueues one `scrape_company_workflow` per
+employer on the `company-scrape` queue (two at a time: one being graded, the
+next being fetched) and waits for all of them. Each scrape publishes a
+`progress` event and each vacancy's enrichment a `stage` event;
+`GET /api/companies/scrape-batch/{id}` turns them into one line per employer,
+such as "vacancy 5/23 - translating the description" or "waiting for the GPU"
+when another employer's vacancy holds it. Cancelling the batch cancels every
+child recursively. See ADR-0010.
+
 **A running scrape can be cancelled** from the company drawer, which calls
 `DBOS.cancel_workflow(id, cancel_children=True)`. Cancelling children is the
 point: the expensive part is the enrichment workflows already on the `llm`
@@ -320,6 +336,9 @@ concurrency 1.
 
 Page fetching is network-bound and runs on a separate `job-ingest` queue with
 `worker_concurrency=3`, so scraping is parallel while inference stays serial.
+Batch company scrapes run on their own `company-scrape` queue
+(`worker_concurrency=2`), so employers waiting on the GPU never hold the
+page-fetch slots.
 
 **Clearing a wedged queue.** Bumping the version has a sharp edge: DBOS only
 recovers workflows belonging to the *current* version, so a job left PENDING by
@@ -329,7 +348,9 @@ permanently and nothing runs again. `python scripts/enrich_jobs.py
 --clear-stuck` cancels workflows stranded by another version. Observed: one
 `enrich_job_workflow` PENDING at 0.1.0 held the only slot while 91 jobs waited.
 
-**Bump `application_version` when a workflow's step sequence changes.** DBOS
+**Bump `APPLICATION_VERSION` (`app/workflows/enrichment.py`) when a workflow's
+step sequence changes.** It is one constant shared by `main.py` and
+`scripts/enrich_jobs.py`; a guard test fails if either hardcodes its own. DBOS
 replays a recovered workflow against the current code and aborts with
 `DBOSUnexpectedStepError` if the recorded steps no longer line up. Inserting a
 step into the enrichment sequence while a scrape was mid-flight killed that
@@ -463,6 +484,14 @@ heuristics assign. See ADR-0005.
   fetched vacancy; the 2901 seed rows stay empty until then.
 - `province` holds cities and is not normalised.
 - No authentication, and no CI pipeline.
+- **The app and the CLI use different DBOS system databases.** With
+  `DBOS_SYSTEM_DATABASE_URL` unset, DBOS keeps its state in a SQLite file named
+  after the app: `main.py` ("dbos-app-starter") uses `dbos_app_starter.sqlite`,
+  `enrich_jobs.py` ("job-hunt-enrich") uses `job_hunt_enrich.sqlite`. So
+  `global_concurrency=1` does not span the two processes, and
+  `enrich_jobs.py --clear-stuck` cannot see workflows stranded in the app's
+  database. Setting `DBOS_SYSTEM_DATABASE_URL` for both (or giving them one
+  name) would close this.
 - `profiles/default.json` was seeded by inference from this project's stack, not
   confirmed with the user; every `fit_score` is only as good as that file.
 - Assessment quality is bounded by a 4B model. Prompt constraints, JSON-mode
