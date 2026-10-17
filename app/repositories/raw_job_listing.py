@@ -84,6 +84,32 @@ def remove(session: Session, listing_id: int) -> RawJobListing:
     return listing
 
 
+def graded_html_stats(session: Session) -> tuple[int, int]:
+    """(listings, bytes) of stored HTML belonging to graded listings."""
+    row = session.execute(
+        select(func.count(), func.coalesce(func.sum(func.octet_length(RawJobListing.html_body)), 0))
+        .where(RawJobListing.status == GRADED, RawJobListing.html_body != "")
+    ).one()
+    return int(row[0]), int(row[1])
+
+
+def clear_graded_html(session: Session) -> tuple[int, int]:
+    """Empty the stored HTML of every graded listing; returns (listings, bytes).
+
+    Only the page body goes. The row stays - url, status and the job it made -
+    because the url is what stops the same link being processed twice. Anything
+    not graded (waiting, unreadable, removed, a removed posting) is left alone:
+    its HTML is the only copy of what the next attempt needs.
+    """
+    count, size = graded_html_stats(session)
+    session.execute(
+        update(RawJobListing)
+        .where(RawJobListing.status == GRADED, RawJobListing.html_body != "")
+        .values(html_body="")
+    )
+    return count, size
+
+
 def mark(
     session: Session, listing_id: int, status: str, *, job_id: Optional[int] = None
 ) -> None:

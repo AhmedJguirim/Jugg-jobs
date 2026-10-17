@@ -172,7 +172,7 @@ stored exactly as pasted) and `created_at`/`updated_at`. Not yet linked to
 
 ### Workspace: `raw_job_listings`
 
-`id`, `url`, `html_body` (as pasted), and where it stands (ADR-0016): `status` (NULL = waiting to be graded,
+`id`, `url`, `html_body` (as pasted; emptied for graded listings by the Cleanup button, ADR-0018), and where it stands (ADR-0016): `status` (NULL = waiting to be graded,
 `graded`, `not_found`, `unparseable`, `unsupported`, `removed`), `job_id` (the job made from it) and `processed_at`.
 
 ### Workspace: `jobs_test`

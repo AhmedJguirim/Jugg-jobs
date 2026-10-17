@@ -151,6 +151,24 @@
         </div>
       </section>
 
+      <!-- ── Stored HTML of graded listings ─────────────────────────── -->
+      <section class="rounded-lg border border-ink-border bg-ink-raised px-4 py-3 mb-6 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm"
+               aria-label="Cleanup">
+        <div class="min-w-0 flex-1">
+          <span class="font-semibold">Stored HTML</span>
+          <span class="text-fg-muted" x-show="cleanup.listings"
+                x-text="` · ${cleanup.listings} graded listing(s) still hold ${formatBytes(cleanup.bytes)} of page HTML`"></span>
+          <span class="text-fg-muted" x-show="!cleanup.listings">
+            · nothing to clean up: no graded listing still holds its HTML
+          </span>
+          <span x-show="cleanupNotice" class="text-ok" x-text="' · ' + cleanupNotice" role="status"></span>
+        </div>
+        <button type="button" @click="runCleanup()" :disabled="cleanupBusy || !cleanup.listings"
+                class="px-3 py-1.5 rounded-md border border-danger/50 text-danger hover:bg-danger/10 transition disabled:opacity-40 disabled:hover:bg-transparent">
+          Cleanup graded raw listings
+        </button>
+      </section>
+
       <!-- ── Waiting to be graded ───────────────────────────────────── -->
       <section aria-label="Waiting to be graded">
         <h2 class="text-[11px] uppercase tracking-wider text-fg-muted mb-2">
@@ -208,6 +226,11 @@
           pendingTotal: 0,
           listLoading: true,
           runs: {}, // listing id -> { state, label, problem, workflowId }
+
+          // --- cleanup of graded listings' stored HTML ----------------------------
+          cleanup: { listings: 0, bytes: 0 },
+          cleanupBusy: false,
+          cleanupNotice: "",
 
           // --- the batch --------------------------------------------------------
           batch: null, // { workflow_id, status, listings, counts }
@@ -314,10 +337,46 @@
               const body = await res.json();
               this.pending = body.items;
               this.pendingTotal = body.total;
+              this.loadCleanup(); // grading a listing changes what can be cleaned up
             } catch (e) {
               this.error = "Could not load the waiting listings: " + e.message;
             } finally {
               this.listLoading = false;
+            }
+          },
+          formatBytes(bytes) {
+            if (bytes >= 1024 * 1024) return (bytes / 1024 / 1024).toFixed(1) + " MB";
+            return Math.max(1, Math.round(bytes / 1024)) + " kB";
+          },
+          async loadCleanup() {
+            try {
+              const res = await fetch("/api/workspace/raw-job-listings-cleanup");
+              if (res.ok) this.cleanup = await res.json();
+            } catch (e) {
+              /* the figure is informational; the page works without it */
+            }
+          },
+          async runCleanup() {
+            if (this.cleanupBusy || !this.cleanup.listings) return;
+            const ok = confirm(
+              `Empty the stored HTML of ${this.cleanup.listings} graded listing(s) (${this.formatBytes(this.cleanup.bytes)})?\n\n` +
+              "Their jobs, grades and links stay. Only the saved copy of each page goes, so a listing " +
+              "can no longer be re-graded from it - you would paste the page again. Listings that are " +
+              "not graded yet are not touched. This cannot be undone."
+            );
+            if (!ok) return;
+            this.cleanupBusy = true;
+            this.cleanupNotice = "";
+            try {
+              const res = await fetch("/api/workspace/raw-job-listings-cleanup", { method: "POST" });
+              if (!res.ok) throw new Error("HTTP " + res.status);
+              const done = await res.json();
+              this.cleanupNotice = `cleaned ${done.cleaned} listing(s), ${this.formatBytes(done.bytes_freed)} of HTML removed`;
+              await this.loadCleanup();
+            } catch (e) {
+              this.error = "Cleanup failed: " + e.message;
+            } finally {
+              this.cleanupBusy = false;
             }
           },
           shortUrl(url) {

@@ -50,6 +50,8 @@ def finished_label(result: Optional[dict]) -> tuple[str, bool]:
         return "job not found on the platform - nothing to grade", False
     if status == "unsupported":
         return "no parser for this site", True
+    if status == "no_html":
+        return "its HTML was cleaned up after grading - paste the page again to re-grade", True
     if status == "unparseable":
         return f"could not read the page: {reason}" if reason else "could not read the page", True
     if status == "llm_unavailable":

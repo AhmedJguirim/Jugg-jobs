@@ -66,6 +66,23 @@ def submit_raw_job_listing(body: RawJobListingIn):
         return _summary(listing, len(listing.html_body))
 
 
+# Not under /raw-job-listings/...: a path segment there is read as a listing id.
+@router.get("/api/workspace/raw-job-listings-cleanup")
+def graded_html_stats():
+    """How much stored HTML belongs to listings that are already graded."""
+    with session_scope() as session:
+        listings, size = repo.graded_html_stats(session)
+        return {"listings": listings, "bytes": size}
+
+
+@router.post("/api/workspace/raw-job-listings-cleanup")
+def cleanup_graded_html():
+    """Empty the stored HTML of graded listings. Their rows, links and jobs stay."""
+    with session_scope() as session:
+        listings, size = repo.clear_graded_html(session)
+        return {"cleaned": listings, "bytes_freed": size}
+
+
 @router.get("/api/workspace/raw-job-listings")
 def list_raw_job_listings(
     limit: int = Query(50, ge=1, le=200),

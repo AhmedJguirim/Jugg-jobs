@@ -153,3 +153,19 @@ def test_failed_rows_offer_remove_and_retry_but_healthy_rows_only_grade(app_serv
         else:
             expect(row.get_by_role("button", name="Remove link")).to_be_hidden()
             expect(row.get_by_role("button", name="Grade", exact=True)).to_be_visible()
+
+
+def test_cleanup_button_reflects_what_there_is_to_clean(app_server: str, page: Page):
+    """Nothing is clicked: cleaning up empties real data."""
+    stats = page.request.get(f"{app_server}/api/workspace/raw-job-listings-cleanup").json()
+
+    page.goto(f"{app_server}/workspace/raw/other")
+
+    section = page.get_by_role("region", name="Cleanup")
+    button = section.get_by_role("button", name="Cleanup graded raw listings")
+    expect(button).to_be_visible()
+    if stats["listings"]:
+        expect(button).to_be_enabled()
+        expect(section).to_contain_text(f"{stats['listings']} graded listing(s)")
+    else:
+        expect(button).to_be_disabled()

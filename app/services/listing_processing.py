@@ -29,6 +29,7 @@ STORED = "stored"
 NOT_FOUND = "not_found"
 UNSUPPORTED = "unsupported"
 UNPARSEABLE = "unparseable"
+NO_HTML = "no_html"
 
 
 def load_listing(session: Session, raw_listing_id: int) -> dict[str, Any]:
@@ -39,6 +40,17 @@ def load_listing(session: Session, raw_listing_id: int) -> dict[str, Any]:
 def parse(listing: dict[str, Any]) -> dict[str, Any]:
     """Detect the platform and parse. Never raises for bad input: it reports."""
     base = {"raw_listing_id": listing["id"], "url": listing["url"]}
+
+    # A graded listing's HTML may have been cleaned up. That is not an unreadable
+    # page: it must not be marked as one (which would put a graded listing back on
+    # the waiting list), so it gets its own status that nothing records.
+    if not (listing.get("html") or "").strip():
+        return {
+            **base,
+            "status": NO_HTML,
+            "platform": None,
+            "reason": "its HTML was cleaned up after grading; paste the page again to re-grade it",
+        }
 
     platform = detect_platform(listing["url"])
     if platform is None:
