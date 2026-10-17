@@ -86,23 +86,44 @@ class Node:
         walk(self)
         return " ".join("".join(parts).split())
 
-    def inner_html(self, drop_attrs: frozenset = frozenset(), keep_attrs: Optional[frozenset] = None) -> str:
-        return "".join(_render(child, drop_attrs, keep_attrs) for child in self.children)
+    def inner_html(
+        self,
+        drop_attrs: frozenset = frozenset(),
+        keep_attrs: Optional[frozenset] = None,
+        allowed_tags: Optional[frozenset] = None,
+    ) -> str:
+        """Serialise the children.
+
+        `allowed_tags` makes the output safe to show with `innerHTML`: any other
+        element is replaced by its (filtered) children, and `href`/`src` values
+        must use http(s) or mailto - so a pasted `<a href="javascript:...">` or
+        `<script>` cannot survive.
+        """
+        return "".join(
+            _render(child, drop_attrs, keep_attrs, allowed_tags) for child in self.children
+        )
 
 
-def _render(node: "Node | str", drop: frozenset, keep: Optional[frozenset]) -> str:
+_SAFE_URL = ("http://", "https://", "mailto:", "/", "#")
+
+
+def _render(node: "Node | str", drop: frozenset, keep: Optional[frozenset], allowed: Optional[frozenset]) -> str:
     if isinstance(node, str):
         return escape(node, quote=False)
     if node.tag in _SKIP_TEXT:
         return ""
+    inner = "".join(_render(child, drop, keep, allowed) for child in node.children)
+    if allowed is not None and node.tag not in allowed:
+        return inner
     attrs = "".join(
         f' {name}="{escape(value or "", quote=True)}"'
         for name, value in node.attrs.items()
-        if name not in drop and (keep is None or name in keep)
+        if name not in drop
+        and (keep is None or name in keep)
+        and (allowed is None or name not in ("href", "src") or (value or "").strip().lower().startswith(_SAFE_URL))
     )
     if node.tag in _VOID:
         return f"<{node.tag}{attrs}>"
-    inner = "".join(_render(child, drop, keep) for child in node.children)
     return f"<{node.tag}{attrs}>{inner}</{node.tag}>"
 
 

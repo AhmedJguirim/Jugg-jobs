@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 
 from app import logging_setup
-from app.api import board_router, companies_router, workspace_router
+from app.api import board_router, companies_router, jobs_test_router, workspace_router
 from app.db.session import session_scope
 from app.integrations.nvb import fetch_jobs_page, to_job_creates
 from app.integrations.nvb.schema import JobSearchResponse
@@ -43,6 +43,7 @@ DBOS(config=config)
 app.include_router(board_router)
 app.include_router(companies_router)
 app.include_router(workspace_router)
+app.include_router(jobs_test_router)
 
 # Mirror DBOS/uvicorn logs into logs/dev.log alongside our own dev logger.
 logging_setup.attach("dbos", "uvicorn.error")
@@ -168,6 +169,12 @@ def workspace_page():
 @app.get("/workspace/raw/other")
 def workspace_raw_form_page():
     return render_page("workspace_raw.html", "workspace")
+
+
+# Parsed listings (jobs_test), listed with a detail drawer like the board.
+@app.get("/jobs-test")
+def jobs_test_page():
+    return render_page("jobs_test.html", "workspace")
 
 
 # Listing URLs: extract result links from a pasted Google results block.

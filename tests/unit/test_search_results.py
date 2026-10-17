@@ -148,3 +148,14 @@ class TestApi:
         )
 
         assert response.status_code == 422
+
+
+class TestProcessedFlag:
+    def test_a_url_with_stored_html_is_marked_processed(self, session):
+        repo.add_many(session, [A, B])
+        raw_repo.create(session, RawJobListingCreate(url=A, html_body="<html></html>"))
+
+        assert repo.processed_urls(session, [A, B]) == {A}
+
+    def test_no_urls_no_query(self, session):
+        assert repo.processed_urls(session, []) == set()

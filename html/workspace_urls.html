@@ -74,11 +74,26 @@
         <div x-show="items.length" class="overflow-x-auto rounded-lg border border-ink-border">
           <table class="w-full text-sm">
             <thead class="bg-ink-raised text-[11px] uppercase tracking-wider text-fg-muted text-left">
-              <tr><th class="px-3 py-2">url</th><th class="px-3 py-2 whitespace-nowrap">scraped_at</th></tr>
+              <tr>
+                <th class="px-3 py-2"><span class="sr-only">process</span></th>
+                <th class="px-3 py-2">url</th>
+                <th class="px-3 py-2 whitespace-nowrap">scraped_at</th>
+              </tr>
             </thead>
             <tbody>
               <template x-for="item in items" :key="item.id">
                 <tr class="border-t border-ink-border" :class="item.fresh ? 'bg-ok/10' : ''">
+                  <td class="px-3 py-2 whitespace-nowrap">
+                    <!-- Opens the HTML form with this link filled in. Disabled once its HTML is stored. -->
+                    <button type="button" :disabled="item.processed"
+                            @click="processUrl(item)"
+                            :title="item.processed ? 'Already processed' : 'Paste this page\'s HTML'"
+                            class="px-2.5 py-1 text-xs rounded-md border transition"
+                            :class="item.processed
+                              ? 'border-ink-border text-fg-muted/50 cursor-not-allowed'
+                              : 'border-cyan/60 text-cyan hover:bg-cyan/10'"
+                            x-text="item.processed ? 'Processed' : 'Process'"></button>
+                  </td>
                   <td class="px-3 py-2 break-all">
                     <a :href="item.url" target="_blank" rel="noopener noreferrer" class="text-lily hover:underline" x-text="item.url"></a>
                   </td>
@@ -101,6 +116,10 @@
           saving: false,
           notice: "",
           error: "",
+          processUrl(item) {
+            if (item.processed) return;
+            location.href = "/workspace/raw/existing?url=" + encodeURIComponent(item.url);
+          },
           async load(freshUrls = new Set()) {
             try {
               const res = await fetch("/api/workspace/manual-job-listing-urls?limit=500");

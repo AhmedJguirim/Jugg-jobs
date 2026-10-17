@@ -70,5 +70,12 @@ def count_unprocessed(session: Session) -> int:
     return session.scalar(statement) or 0
 
 
+def processed_urls(session: Session, urls: Sequence[str]) -> set[str]:
+    """Which of these URLs already have a stored raw listing."""
+    if not urls:
+        return set()
+    return set(session.scalars(select(RawJobListing.url).where(RawJobListing.url.in_(urls))))
+
+
 def count(session: Session) -> int:
     return session.scalar(select(func.count()).select_from(ManualJobListingUrl)) or 0

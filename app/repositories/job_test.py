@@ -65,3 +65,12 @@ def upsert(session: Session, payload: JobCreate) -> tuple[JobTest, bool]:
 
     session.flush()
     return job, created
+
+
+def list_all(session: Session) -> list[JobTest]:
+    """Newest first. The table is small and hand-fed, so there is no paging."""
+    return list(session.scalars(select(JobTest).order_by(JobTest.id.desc())).unique())
+
+
+def get(session: Session, job_id: int) -> Optional[JobTest]:
+    return session.get(JobTest, job_id)

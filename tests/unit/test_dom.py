@@ -40,3 +40,29 @@ def test_class_prefix_matches_hashed_module_names():
     root = parse_html('<div class="_notFoundContent_b9ljl_6">x</div>')
 
     assert root.find_class_prefix("_notFoundContent")
+
+
+class TestSafeSerialisation:
+    ALLOWED = frozenset({"p", "a", "strong"})
+
+    def render(self, html):
+        return parse_html(f"<div>{html}</div>").find("div").inner_html(
+            keep_attrs=frozenset({"href", "src"}), allowed_tags=self.ALLOWED
+        )
+
+    def test_unlisted_tags_are_unwrapped_not_kept(self):
+        assert self.render("<p>a<iframe src='https://x'>b</iframe><form>c</form></p>") == "<p>abc</p>"
+
+    def test_script_and_style_content_is_dropped(self):
+        assert self.render("<p>a</p><script>alert(1)</script><style>p{}</style>") == "<p>a</p>"
+
+    def test_javascript_links_lose_their_href(self):
+        assert self.render('<a href="javascript:alert(1)">x</a>') == "<a>x</a>"
+        assert self.render('<a href=" JavaScript:alert(1)">x</a>') == "<a>x</a>"
+
+    def test_web_and_mail_links_survive(self):
+        assert self.render('<a href="https://a.test/?x=1&amp;y=2">x</a>') == '<a href="https://a.test/?x=1&amp;y=2">x</a>'
+        assert self.render('<a href="mailto:a@b.test">x</a>') == '<a href="mailto:a@b.test">x</a>'
+
+    def test_event_handlers_are_never_kept(self):
+        assert self.render('<p onclick="x()">a</p>') == "<p>a</p>"

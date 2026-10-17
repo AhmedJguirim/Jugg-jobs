@@ -63,3 +63,43 @@ def test_each_section_has_its_own_navigation(app_server: str, page: Page):
     nav = page.get_by_role("navigation", name="Section navigation")
     expect(nav.get_by_role("link", name="Raw listings")).to_have_attribute("aria-current", "page")
     expect(nav.get_by_role("link", name="Employers")).to_have_count(0)
+
+
+def test_jobs_test_lists_rows_and_opens_a_drawer(app_server: str, page: Page):
+    items = page.request.get(f"{app_server}/api/jobs-test").json()["items"]
+    if not items:
+        pytest.skip("jobs_test is empty")
+    first = items[0]
+
+    page.goto(f"{app_server}/jobs-test")
+    page.locator(f"li[data-job-id='{first['id']}']").click()
+
+    drawer = page.get_by_label("Job details")
+    expect(drawer.get_by_role("heading", name=first["title"])).to_be_visible()
+    expect(drawer.get_by_role("link", name="Open vacancy")).to_have_attribute("href", first["url"])
+    expect(drawer.get_by_role("heading", name="Description")).to_be_visible()
+    page.keyboard.press("Escape")
+    expect(drawer).to_be_hidden()
+
+
+def test_jobs_test_is_in_the_workspace_navigation(app_server: str, page: Page):
+    page.goto(f"{app_server}/jobs-test")
+    nav = page.get_by_role("navigation", name="Section navigation")
+
+    expect(nav.get_by_role("link", name="Jobs test")).to_have_attribute("aria-current", "page")
+
+
+def test_listing_urls_process_button_follows_the_processed_flag(app_server: str, page: Page):
+    items = page.request.get(f"{app_server}/api/workspace/manual-job-listing-urls").json()["items"]
+    if not items:
+        pytest.skip("no collected urls")
+
+    page.goto(f"{app_server}/workspace/urls")
+    for item in items[:5]:
+        row = page.locator("tr", has_text=item["url"]).first
+        button = row.get_by_role("button")
+        if item["processed"]:
+            expect(button).to_be_disabled()
+            expect(button).to_have_text("Processed")
+        else:
+            expect(button).to_be_enabled()

@@ -121,7 +121,15 @@
           done: false,
           async init() {
             await this.load();
-            if (this.existing) await this.nextUrl();
+            if (this.existing) {
+              await this.nextUrl();
+              // Arriving from a "Process" button on Listing URLs: that link, not the next in line.
+              const chosen = new URLSearchParams(location.search).get("url");
+              if (chosen) {
+                this.form.url = chosen;
+                this.done = false;
+              }
+            }
           },
           async nextUrl() {
             try {

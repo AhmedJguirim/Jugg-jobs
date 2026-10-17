@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Jobs test - job-hunt</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      // Same palette as the other pages.
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              ink: { DEFAULT: "#16181d", raised: "#1c1f25", border: "#3a3d44" },
+              fg: { DEFAULT: "#d8d9dc", muted: "#a3a5aa" },
+              splice: "#c8f62e",
+              lily: "#9ab5e5",
+              cyan: "#44e3ee",
+              danger: "#dc5848",
+            },
+            fontFamily: { sans: ['"Open Sans"', "system-ui", "sans-serif"] },
+          },
+        },
+      };
+    </script>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/alpinejs/3.14.9/cdn.min.js"></script>
+    <style>
+      [x-cloak] { display: none !important; }
+      ::-webkit-scrollbar { width: 10px; height: 10px; }
+      ::-webkit-scrollbar-track { background: #16181d; }
+      ::-webkit-scrollbar-thumb { background: #3a3d44; border-radius: 5px; }
+      /* The parsed description is trusted HTML (formatting tags only, see the parser). */
+      .listing-html { line-height: 1.65; font-size: 0.875rem; color: rgba(216, 217, 220, 0.9); }
+      .listing-html h1, .listing-html h2, .listing-html h3, .listing-html h4 { font-weight: 700; margin: 1.25em 0 0.4em; color: #d8d9dc; }
+      .listing-html h2 { font-size: 1.05rem; }
+      .listing-html p { margin: 0.5em 0; }
+      .listing-html ul { list-style: disc; padding-left: 1.4em; margin: 0.5em 0; }
+      .listing-html ol { list-style: decimal; padding-left: 1.4em; margin: 0.5em 0; }
+      .listing-html a { color: #9ab5e5; text-decoration: underline; }
+    </style>
+  </head>
+
+  <body class="bg-ink text-fg font-sans min-h-screen antialiased">
+    <!--TOPBAR-->
+    <div x-data="jobsTest()" x-init="load()" x-cloak class="max-w-[1100px] mx-auto px-4 sm:px-6 py-6">
+      <header class="mb-6">
+        <h1 class="text-2xl sm:text-3xl font-bold tracking-tight">Jobs test</h1>
+        <p class="text-sm text-fg-muted mt-1">
+          Listings the parsers stored in <code class="text-fg">jobs_test</code>
+          <span class="tabular-nums" x-text="'(' + jobs.length + ')'"></span>.
+        </p>
+      </header>
+
+      <div x-show="error" class="mb-6 rounded-lg border border-danger/50 bg-danger/10 px-4 py-3 text-sm" role="alert">
+        <strong class="text-danger">Could not load.</strong>
+        <span class="text-fg-muted" x-text="error"></span>
+      </div>
+
+      <p x-show="!loading &amp;&amp; !jobs.length &amp;&amp; !error" class="text-sm text-fg-muted">
+        Nothing parsed yet. Store a listing's HTML under Raw listings, then process it.
+      </p>
+
+      <!-- ── List ─────────────────────────────────────────────────── -->
+      <ul class="space-y-3">
+        <template x-for="job in jobs" :key="job.id">
+          <li
+            @click="open(job)"
+            @keydown.enter="open(job)"
+            tabindex="0"
+            class="group rounded-lg border border-ink-border bg-ink-raised hover:border-cyan/50 transition cursor-pointer p-4"
+            :data-job-id="job.id"
+          >
+            <div class="flex flex-wrap items-center gap-2">
+              <h2 class="font-semibold group-hover:text-cyan transition" x-text="job.title"></h2>
+              <span class="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border border-ink-border text-fg-muted"
+                    x-text="job.source"></span>
+              <span x-show="job.location_type"
+                    class="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border border-ink-border text-fg-muted"
+                    x-text="job.location_type"></span>
+            </div>
+            <p class="text-sm text-fg-muted mt-1">
+              <span class="text-lily" x-text="job.company || 'unknown employer'"></span>
+              <span x-show="job.city"> · <span x-text="job.city"></span></span>
+              <span x-show="job.employment_type"> · <span x-text="job.employment_type"></span></span>
+              <span x-show="job.salary"> · <span x-text="job.salary"></span></span>
+            </p>
+          </li>
+        </template>
+      </ul>
+
+      <!-- ── Detail drawer ────────────────────────────────────────── -->
+      <div
+        x-show="selected"
+        x-transition.opacity
+        @click.self="close()"
+        @keydown.escape.window="close()"
+        class="fixed inset-0 z-40 bg-black/70 backdrop-blur-sm flex justify-end"
+      >
+        <aside
+          x-show="selected"
+          x-transition:enter="transition ease-out duration-200"
+          x-transition:enter-start="translate-x-full"
+          x-transition:enter-end="translate-x-0"
+          class="w-full max-w-3xl h-full bg-ink border-l border-ink-border overflow-y-auto"
+          aria-label="Job details"
+        >
+          <template x-if="selected">
+            <div>
+              <div class="sticky top-0 bg-ink/95 backdrop-blur border-b border-ink-border px-5 py-4 z-10">
+                <div class="flex items-start gap-3">
+                  <div class="min-w-0 flex-1">
+                    <h2 class="text-lg font-bold" x-text="selected.title"></h2>
+                    <p class="text-sm text-fg-muted mt-0.5">
+                      <span class="text-lily" x-text="selected.company || 'unknown employer'"></span>
+                      <span x-show="selected.city"> · <span x-text="selected.city"></span></span>
+                    </p>
+                  </div>
+                  <button @click="close()" aria-label="Close"
+                          class="shrink-0 text-fg-muted hover:text-fg text-2xl leading-none px-1">&times;</button>
+                </div>
+                <div class="mt-3">
+                  <a x-show="selected.url" :href="selected.url" target="_blank" rel="noopener noreferrer"
+                     class="inline-block px-3 py-1.5 text-sm rounded-md bg-splice/15 border border-splice/50 text-splice hover:bg-splice/25 transition">
+                    Open vacancy ↗
+                  </a>
+                </div>
+              </div>
+
+              <div class="px-5 py-5 space-y-6">
+                <dl class="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
+                  <template x-for="fact in facts(selected)" :key="fact.label">
+                    <div class="rounded-md border border-ink-border bg-ink-raised px-3 py-2">
+                      <dt class="text-[10px] uppercase tracking-wider text-fg-muted" x-text="fact.label"></dt>
+                      <dd class="mt-0.5 break-words" x-text="fact.value"></dd>
+                    </div>
+                  </template>
+                </dl>
+
+                <section>
+                  <div class="flex items-baseline justify-between mb-2">
+                    <h3 class="text-[11px] uppercase tracking-wider text-fg-muted">Description</h3>
+                    <span x-show="detailLoading" class="text-xs text-fg-muted">loading…</span>
+                  </div>
+                  <p x-show="!selected.description &amp;&amp; !detailLoading" class="text-sm text-fg-muted italic">
+                    The page had no description.
+                  </p>
+                  <div class="listing-html" x-html="selected.description || ''"></div>
+                </section>
+              </div>
+            </div>
+          </template>
+        </aside>
+      </div>
+    </div>
+
+    <script>
+      function jobsTest() {
+        return {
+          jobs: [],
+          selected: null,
+          loading: true,
+          detailLoading: false,
+          error: "",
+
+          async load() {
+            try {
+              const res = await fetch("/api/jobs-test");
+              if (!res.ok) throw new Error("HTTP " + res.status);
+              this.jobs = (await res.json()).items;
+            } catch (e) {
+              this.error = e.message;
+            } finally {
+              this.loading = false;
+            }
+          },
+
+          async open(job) {
+            // Show the row's facts at once, then fill in the full record.
+            this.selected = { ...job, description: null, sections: {} };
+            this.detailLoading = true;
+            try {
+              const res = await fetch("/api/jobs-test/" + job.id);
+              if (res.ok) this.selected = await res.json();
+            } finally {
+              this.detailLoading = false;
+            }
+          },
+
+          close() {
+            this.selected = null;
+          },
+
+          // Every fact the record has; empty ones are left out, so what is
+          // missing is visible as an absence rather than a row of dashes.
+          facts(job) {
+            const rows = [
+              ["Source", job.source],
+              ["External id", job.external_id],
+              ["Status", job.status],
+              ["Origin", job.origin],
+              ["Employer site", job.company_website],
+              ["City", job.city],
+              ["Region", job.province],
+              ["Salary", job.salary],
+              ["Apply option", job.apply_option],
+              ["Raw listing", job.raw_listing_id ? "#" + job.raw_listing_id : null],
+              ["Stored", job.created_at ? new Date(job.created_at).toLocaleString() : null],
+              ...Object.entries(job.sections || {}),
+            ];
+            return rows
+              .filter(([, value]) => value !== null && value !== undefined && value !== "")
+              .map(([label, value]) => ({ label, value: String(value) }));
+          },
+        };
+      }
+    </script>
+  </body>
+</html>

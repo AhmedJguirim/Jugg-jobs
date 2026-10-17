@@ -64,6 +64,8 @@ Supporting trees, outside the runtime path:
 | `app/parsers/` | Listing parsers: platform from the URL, one pure parser per platform returning `JobCreate` (ADR-0014) |
 | `app/text/dom.py` | Small stdlib HTML tree used by the parsers |
 | `app/workflows/listing_processing.py` | `process_raw_listing_workflow`: raw listing -> parse -> `jobs_test` |
+| `app/api/jobs_test.py` | Read-only API behind `/jobs-test`: list, and one record with its description |
+| `html/jobs_test.html` | The parsed listings with a detail drawer, served at `/jobs-test` |
 | `html/workspace.html` | Raw listings form and list, served at `/workspace` |
 | `html/_topbar.html` | Section switch (Jobs / Workspace) and per-section nav, injected into every page by `main.py:render_page` |
 | `app/workflows/` | DBOS workflows/steps; registers the `llm` and `job-ingest` queues |

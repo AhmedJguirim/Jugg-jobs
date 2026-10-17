@@ -41,6 +41,11 @@ _EMPTY_PARAGRAPH = re.compile(r"<p></p>")
 # Attributes worth keeping in the stored description; Ashby's inline `style`
 # (a min-height spacer on every paragraph) is noise.
 _KEEP_ATTRS = frozenset({"href"})
+# The description is shown as HTML, so only formatting tags survive.
+_ALLOWED_TAGS = frozenset(
+    {"p", "br", "ul", "ol", "li", "strong", "b", "em", "i", "u", "a", "h1", "h2", "h3",
+     "h4", "h5", "h6", "blockquote", "code", "pre", "hr", "span", "div"}
+)
 
 
 def parse(url: str, html: str) -> ParseResult:
@@ -159,7 +164,7 @@ def _description(root: Node) -> Optional[str]:
     node = root.find(cls="ashby-job-posting-description")
     if node is None:
         return None
-    html = node.inner_html(keep_attrs=_KEEP_ATTRS)
+    html = node.inner_html(keep_attrs=_KEEP_ATTRS, allowed_tags=_ALLOWED_TAGS)
     html = _EMPTY_PARAGRAPH.sub("", html).strip()
     return html or None
 

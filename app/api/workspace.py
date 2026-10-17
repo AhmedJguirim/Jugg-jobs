@@ -131,6 +131,7 @@ def list_manual_job_listing_urls(
 ):
     with session_scope() as session:
         rows = url_repo.list_recent(session, limit=limit, offset=offset)
+        processed = url_repo.processed_urls(session, [row.url for row in rows])
         return {
             "total": url_repo.count(session),
             "items": [
@@ -138,6 +139,8 @@ def list_manual_job_listing_urls(
                     "id": row.id,
                     "url": row.url,
                     "scraped_at": row.scraped_at.isoformat() if row.scraped_at else None,
+                    # True once its HTML has been stored (a raw listing with this url).
+                    "processed": row.url in processed,
                     "created_at": row.created_at.isoformat() if row.created_at else None,
                 }
                 for row in rows
