@@ -132,6 +132,11 @@ class TestSavingOnlyStores:
         assert response.json()["status"] is None and "workflow_id" not in response.json()
         assert client.started == []
 
+    def test_a_greenhouse_listing_waits_to_be_graded(self, client):
+        response = self.save(client, "https://job-boards.greenhouse.io/2k/jobs/8035080003")
+
+        assert response.json()["status"] is None and client.started == []
+
     @pytest.mark.parametrize("url", [
         "https://example.test/job/1",
         "https://www.nationalevacaturebank.nl/vacature/123/dev",

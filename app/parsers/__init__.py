@@ -48,6 +48,9 @@ ParseResult = Union[ParsedListing, ListingNotFound]
 # `jobs.ashbyhq.com` is listed, `foo.jobs.ashbyhq.com` would match too.
 PLATFORM_HOSTS = {
     "jobs.ashbyhq.com": "ashbyhq",
+    "job-boards.greenhouse.io": "greenhouse",
+    "boards.greenhouse.io": "greenhouse",
+    "job-boards.eu.greenhouse.io": "greenhouse",
 }
 
 
@@ -63,9 +66,9 @@ def detect_platform(url: str) -> Optional[str]:
 
 def _registry() -> dict[str, Callable[[str, str], ParseResult]]:
     # Imported here so the modules can import the types above without a cycle.
-    from app.parsers import ashbyhq
+    from app.parsers import ashbyhq, greenhouse
 
-    return {ashbyhq.PLATFORM: ashbyhq.parse}
+    return {ashbyhq.PLATFORM: ashbyhq.parse, greenhouse.PLATFORM: greenhouse.parse}
 
 
 def parse_listing(platform: str, url: str, html: str) -> ParseResult:

@@ -56,3 +56,20 @@ page, and the stored description matches the page's text word for word (1,365,
   `error=true` in the URL) is a best guess covered by synthetic tests only.
 - Parsing creates `companies` rows (and a `locations` row for a postal address) in
   the shared tables, as for Ashby.
+
+## Update: hooked in (2026-10-17)
+
+After the three pages checked out, the hosts (`job-boards.greenhouse.io`,
+`boards.greenhouse.io`, `job-boards.eu.greenhouse.io`) were added to
+`PLATFORM_HOSTS` and the parser to `_registry`. The three raw listings that had
+been saved as `unsupported` were set back to waiting so the Grade button and bulk
+grading pick them up. A Greenhouse URL saved from now on waits to be graded like
+an Ashby one.
+
+Two follow-ups from the open points above:
+
+- The grader's "Salary" fact now carries the currency kept in `raw`
+  (`169100-250280 USD (yearly)`), so the model does not read 259,000 zloty as
+  euros. The salary *columns* still hold the number alone; that part of the
+  currency question is still open.
+- "Job not found" for Greenhouse is still unverified against a real removed page.

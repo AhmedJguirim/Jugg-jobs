@@ -34,7 +34,7 @@ class TestPlatformDetection:
     @pytest.mark.parametrize(
         "url",
         [
-            "https://boards.greenhouse.io/acme/jobs/1",
+            "https://jobs.lever.co/acme/1",
             "https://example.com/jobs.ashbyhq.com/x",  # host only, not path
             "https://notashbyhq.com/x/y",
             "not a url",

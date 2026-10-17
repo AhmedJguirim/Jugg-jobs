@@ -199,3 +199,40 @@ class TestTheDutchPipelineLeavesOtherSourcesAlone:
             "found": True, "text": "", "needs_translation": False, "needs_assessment": False})
 
         assert flow.enrich_job_workflow.__wrapped__(1, "en", "t", False)["status"] == "no_description"
+
+
+class TestGreenhouseListings:
+    URL = "https://job-boards.greenhouse.io/2k/jobs/8035080003"
+
+    @pytest.fixture
+    def gh_payload(self):
+        html = (FIXTURES.parent / "greenhouse" / "2k_lead_backend_engineer.html").read_text(encoding="utf-8")
+        parsed = parse_listing("greenhouse", self.URL, html)
+        assert isinstance(parsed, ParsedListing)
+        return parsed.job.model_dump(mode="json")
+
+    def test_it_is_graded_with_the_pages_facts_and_then_created(self, session, gh_payload, monkeypatch):
+        stub_model(monkeypatch, '{"fit_score": 80, "verdict": "possible", "remote": "remote", "summary": "A role."}')
+        prepared = grading.prepare(gh_payload, "t", session)
+
+        assert prepared["company"] == "2K" and prepared["facts"] == {
+            "Location": "San Mateo, California, United States",
+            "Salary": "169100-250280 USD (yearly)",  # with its currency
+        }
+        assessment = grading.grade(prepared)
+        result = grading.persist(session, gh_payload, prepared, assessment)
+
+        job = session.get(Job, result["job_id"])
+        assert (job.source, job.external_id, job.company.name) == ("greenhouse", "8035080003", "2K")
+        assert (job.salary_min, job.salary_max, job.salary_type) == (169100, 250280, "yearly")
+        assert enrichment_repo.get_assessment(session, job.id, "t").prompt_version == "assess-global-v1"
+
+    def test_the_dutch_pipeline_leaves_it_alone(self, session, gh_payload, monkeypatch):
+        stub_model(monkeypatch, '{"fit_score": 80, "verdict": "possible"}')
+        prepared = grading.prepare(gh_payload, "t", session)
+        job_id = grading.persist(session, gh_payload, prepared, grading.grade(prepared))["job_id"]
+
+        pending = {j.id for j in enrichment_repo.pending_assessment(
+            session, profile_name="t", prompt_version="assess-v4", limit=100_000)}
+
+        assert job_id not in pending

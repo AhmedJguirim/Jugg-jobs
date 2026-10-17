@@ -51,7 +51,12 @@ def prepare(job: dict[str, Any], profile_name: Optional[str], session: Session) 
     sections = (payload.raw or {}).get("sections") or {}
     facts = {label: value for label, value in sections.items() if value}
     if payload.salary_min is not None and "Compensation" not in facts:
-        facts["Salary"] = f"{payload.salary_min}-{payload.salary_max} ({payload.salary_type})"
+        # The salary columns have no currency; the parser keeps it in raw, and
+        # without it "259000-379000" reads as euros to the model.
+        currency = ((payload.raw or {}).get("compensation") or {}).get("currency")
+        facts["Salary"] = (
+            f"{payload.salary_min}-{payload.salary_max}{' ' + currency if currency else ''} ({payload.salary_type})"
+        )
 
     existing = job_repo.get_by_external_id(session, payload.source, payload.external_id)
     current = False

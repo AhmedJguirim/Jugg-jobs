@@ -22,8 +22,8 @@ posting lists a "New hire equity: $24,000 - $36,000" and no salary at all, and
 must not come out with a $24k salary. Nothing is guessed; a missing fact stays
 empty.
 
-Not hooked to the real flow yet: it is not in `PLATFORM_HOSTS` / `_registry` in
-`app/parsers/__init__.py`, so no listing is parsed with it until it is.
+Registered in `PLATFORM_HOSTS` / `_registry` (`app/parsers/__init__.py`), so a
+listing on one of `HOSTS` is graded and turned into a job like an Ashby one.
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ from app.text.dom import Node, parse_html
 
 PLATFORM = "greenhouse"
 
-# Hosts a Greenhouse job page can be served from (for `detect_platform`, once hooked).
+# Hosts a Greenhouse job page can be served from; keep in step with `PLATFORM_HOSTS`.
 HOSTS = ("job-boards.greenhouse.io", "boards.greenhouse.io", "job-boards.eu.greenhouse.io")
 
 # `/<board>/jobs/<id>`; ids are digits, sometimes with a suffix ("6111473004-98").

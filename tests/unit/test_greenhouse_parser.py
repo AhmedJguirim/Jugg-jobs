@@ -236,13 +236,28 @@ class TestNotFoundAndUnreadable:
         assert parse(self.URL, html).job.company_name is None
 
 
-class TestNotHookedYet:
-    """Greenhouse is not in the platform registry, so no listing reaches this parser
-    through the real flow. When it is hooked, replace this class with detection tests."""
+class TestRegistered:
+    @pytest.mark.parametrize("url", [
+        TWO_K,
+        "https://boards.greenhouse.io/acme/jobs/123",
+        "https://job-boards.eu.greenhouse.io/acme/jobs/123",
+        " https://JOB-BOARDS.greenhouse.io/acme/jobs/123 ",
+    ])
+    def test_greenhouse_urls_are_detected(self, url):
+        assert detect_platform(url) == "greenhouse"
 
-    def test_the_platform_is_not_detected(self):
-        assert detect_platform(TWO_K) is None
+    @pytest.mark.parametrize("url", [
+        "https://greenhouse.io/acme/jobs/123",              # not a job-board host
+        "https://example.com/job-boards.greenhouse.io/x",   # host only, not path
+        "https://notgreenhouse.io/acme/jobs/123",
+    ])
+    def test_lookalikes_are_not(self, url):
+        assert detect_platform(url) is None
 
-    def test_the_registry_has_no_greenhouse_parser(self):
-        with pytest.raises(ListingParseError):
-            parse_listing("greenhouse", TWO_K, page("2k_lead_backend_engineer.html"))
+    def test_the_dispatch_reaches_the_parser(self):
+        result = parse_listing("greenhouse", TWO_K, page("2k_lead_backend_engineer.html"))
+
+        assert isinstance(result, ParsedListing) and result.job.title == "Lead Backend Engineer"
+
+    def test_ashby_is_still_detected(self):
+        assert detect_platform("https://jobs.ashbyhq.com/acme/ac527b20-e9fc-41d1-841c-bc881e2abef6") == "ashbyhq"
