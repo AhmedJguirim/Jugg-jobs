@@ -291,6 +291,10 @@ def browse(
         "vacancies": func.count(func.distinct(Job.id)).desc(),
         "fit": func.max(JobAssessment.fit_score).desc().nullslast(),
         "recent": func.max(Job.start_date).desc().nullslast(),
+        # When the employer entered our table: the 2901 seed rows share one
+        # timestamp, so the tiebreak by name below orders them among themselves.
+        "newest": Company.created_at.desc(),
+        "oldest": Company.created_at.asc(),
     }
     if order_by not in orderings:
         raise ValueError(f"cannot order by {order_by!r}")

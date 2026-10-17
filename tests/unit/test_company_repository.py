@@ -314,3 +314,35 @@ class TestBrowseScrapedBefore:
         count = repo.browse_count(session, scraped_before=self.CUTOFF, include_never_scraped=False, search="Old")
 
         assert count == 1
+
+
+class TestBrowseByCreationDate:
+    """Sorting by when the employer was added, which the batch scrape follows."""
+
+    @pytest.fixture(autouse=True)
+    def companies(self, session: Session):
+        base = datetime(2026, 9, 20, tzinfo=timezone.utc)
+        session.add_all(
+            [
+                Company(name="Middle", created_at=base + timedelta(days=5)),
+                Company(name="Newest", created_at=base + timedelta(days=9)),
+                Company(name="Seed B", created_at=base),
+                Company(name="Seed A", created_at=base),
+            ]
+        )
+        session.flush()
+
+    def names(self, session: Session, order_by: str) -> list[str]:
+        return [company.name for company, *_ in repo.browse(session, limit=10, order_by=order_by)]
+
+    def test_newest_first(self, session: Session):
+        assert self.names(session, "newest") == ["Newest", "Middle", "Seed A", "Seed B"]
+
+    def test_oldest_first(self, session: Session):
+        assert self.names(session, "oldest") == ["Seed A", "Seed B", "Middle", "Newest"]
+
+    def test_same_timestamp_falls_back_to_name(self, session: Session):
+        """The seed rows were all inserted at once."""
+        names = self.names(session, "oldest")
+
+        assert names.index("Seed A") < names.index("Seed B")

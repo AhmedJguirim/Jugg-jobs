@@ -75,6 +75,10 @@ Page fetching is network-bound and runs on a separate `job-ingest` queue.
 Batch company scrapes run on `company-scrape` (two at a time) and report
 progress through DBOS workflow events (`progress`, `stage`) - ADR-0010.
 
+Before each vacancy's GPU work, `enrich_job_workflow` checks the temperature
+(`nvidia-smi`) and sleeps 3 min while it is above 80°C (`GPU_*` settings,
+ADR-0011).
+
 Three caps bound what one click can cost (`app/workflows/enrichment.py`):
 20 pages walked, 50 *new* vacancies stored, 50 vacancies sent to the GPU.
 

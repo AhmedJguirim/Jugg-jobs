@@ -27,7 +27,9 @@ from typing import Any, Optional
 
 from dbos import DBOS, SetWorkflowID
 
+from app.config import get_settings
 from app.db.session import session_scope
+from app.integrations.gpu import gpu_temperature
 from app.integrations.nvb import fetch_jobs_page, to_job_creates
 from app.llm import assess_job, load_profile, translate_text, translate_title
 from app.llm.service import AssessmentUnparseable
@@ -47,7 +49,8 @@ from app.text import sanitize_description
 # would cancel healthy work.
 #
 # 0.3.0: progress events (`set_event`) in the company scrape and enrichment.
-APPLICATION_VERSION = "0.3.0"
+# 0.4.0: GPU temperature check and cooldown sleep before each vacancy's GPU work.
+APPLICATION_VERSION = "0.4.0"
 
 # Queue names. The GPU queue's concurrency is the safety property of this module.
 LLM_QUEUE = "llm"
@@ -249,6 +252,56 @@ def prepare_text(job_id: int, target_language: str, profile_name: str) -> dict:
 
 
 @DBOS.step()
+def read_gpu_temperature() -> dict:
+    """Read the GPU temperature and the cooldown settings, as one checkpoint.
+
+    The settings travel with the reading so a recovered workflow replays the
+    limits it actually ran with, not whatever .env says after a restart.
+    """
+    settings = get_settings()
+    temperature = gpu_temperature()
+    return {
+        "temperature": temperature,
+        "hot": temperature is not None and temperature > settings.gpu_max_temp_c,
+        "max_temp": settings.gpu_max_temp_c,
+        "cooldown_seconds": settings.gpu_cooldown_seconds,
+        "max_cooldowns": settings.gpu_max_cooldowns,
+    }
+
+
+def cool_down_gpu() -> int:
+    """Pause while the GPU is above its temperature limit. Returns pauses taken.
+
+    Called inside `enrich_job_workflow`, which holds the single `llm` slot, so
+    the pause holds the whole queue: the next vacancy cannot start until this
+    one has cooled down and finished. `DBOS.sleep` is durable - a restart
+    mid-pause resumes the remaining time rather than starting over.
+
+    Re-reads after each pause, and gives up after `max_cooldowns` so a stuck
+    sensor cannot stall the queue for good.
+    """
+    reading = read_gpu_temperature()
+    pauses = 0
+    while reading["hot"] and pauses < reading["max_cooldowns"]:
+        seconds = reading["cooldown_seconds"]
+        wait = f"{seconds // 60} min" if seconds % 60 == 0 else f"{seconds} s"
+        message = f"GPU at {reading['temperature']}°C - cooling down for {wait}"
+        log.info("%s (limit %s°C)", message, reading["max_temp"])
+        DBOS.set_event(STAGE_EVENT, message)
+        DBOS.sleep(reading["cooldown_seconds"])
+        pauses += 1
+        reading = read_gpu_temperature()
+
+    if reading["hot"]:
+        log.warning(
+            "GPU still at %s°C after %s pause(s); carrying on",
+            reading["temperature"],
+            pauses,
+        )
+    return pauses
+
+
+@DBOS.step()
 def translate_step(prepared: dict, target_language: str) -> dict:
     """GPU step: translate one vacancy. Runs only on the `llm` queue."""
     result = translate_text(prepared["text"], source_language=prepared["language"])
@@ -428,6 +481,11 @@ def enrich_job_workflow(
     if not prepared["text"]:
         log.info("enrich: job %s has no usable description", job_id)
         return {"job_id": job_id, "status": "no_description"}
+
+    if force or prepared["needs_translation"] or prepared["needs_assessment"]:
+        # Before the GPU is touched, and only when it is about to be: an
+        # already-current vacancy costs no heat, so it does not wait.
+        cool_down_gpu()
 
     translation: Optional[dict] = None
     if force or prepared["needs_translation"]:

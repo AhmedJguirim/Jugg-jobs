@@ -258,7 +258,7 @@ class BatchScrape(BaseModel):
     has_jobs: Optional[bool] = None
     scraped_before: Optional[datetime] = None
     include_never_scraped: bool = True
-    order_by: str = "name"
+    order_by: str = "oldest"
     profile: Optional[str] = None
 
 

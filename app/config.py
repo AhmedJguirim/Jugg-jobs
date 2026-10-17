@@ -51,6 +51,15 @@ class Settings(BaseSettings):
     # Which scoring profile to use when none is named.
     llm_default_profile: str = Field(default="default")
 
+    # --- GPU cooldown ---
+    # Checked before each vacancy that needs the GPU: above this temperature
+    # (Celsius, as nvidia-smi reports it) the queue pauses before the next one.
+    gpu_max_temp_c: int = Field(default=80)
+    gpu_cooldown_seconds: int = Field(default=180)
+    # Give up waiting after this many pauses and carry on, so a stuck sensor
+    # cannot stall the queue forever.
+    gpu_max_cooldowns: int = Field(default=5)
+
     def _url_for(self, database: str) -> str:
         return (
             f"postgresql+psycopg://{self.postgres_user}:{self.postgres_password}"
