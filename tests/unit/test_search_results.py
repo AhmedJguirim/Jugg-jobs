@@ -159,3 +159,24 @@ class TestProcessedFlag:
 
     def test_no_urls_no_query(self, session):
         assert repo.processed_urls(session, []) == set()
+
+
+class TestHidingProcessed:
+    def test_processed_links_are_left_out_on_request(self, session):
+        repo.add_many(session, [A, B])
+        raw_repo.create(session, RawJobListingCreate(url=A, html_body="<h1>Job not found</h1>"))
+
+        everything = {r.url for r in repo.list_recent(session)}
+        waiting = {r.url for r in repo.list_recent(session, only_unprocessed=True)}
+
+        assert {A, B} <= everything and B in waiting and A not in waiting
+        assert repo.count(session, only_unprocessed=True) == repo.count_unprocessed(session)
+
+    def test_api_flag(self, client, monkeypatch):
+        monkeypatch.setattr(workspace, "_start_processing", lambda *a, **k: "wf")  # no DBOS here
+        client.post("/api/workspace/manual-job-listing-urls/extract", json={"html": PAGE})
+        client.post("/api/workspace/raw-job-listings", json={"url": A, "html_body": "<p>x</p>"})
+
+        shown = {i["url"] for i in client.get("/api/workspace/manual-job-listing-urls?hide_processed=true").json()["items"]}
+
+        assert A not in shown and B in shown

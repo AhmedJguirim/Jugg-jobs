@@ -140,13 +140,15 @@ def next_manual_job_listing_url(skip: int = Query(0, ge=0)):
 
 @router.get("/api/workspace/manual-job-listing-urls")
 def list_manual_job_listing_urls(
-    limit: int = Query(200, ge=1, le=1000), offset: int = Query(0, ge=0)
+    limit: int = Query(200, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    hide_processed: bool = False,
 ):
     with session_scope() as session:
-        rows = url_repo.list_recent(session, limit=limit, offset=offset)
+        rows = url_repo.list_recent(session, limit=limit, offset=offset, only_unprocessed=hide_processed)
         processed = url_repo.processed_urls(session, [row.url for row in rows])
         return {
-            "total": url_repo.count(session),
+            "total": url_repo.count(session, only_unprocessed=hide_processed),
             "items": [
                 {
                     "id": row.id,

@@ -68,9 +68,9 @@
 
       <section>
         <h2 class="text-[11px] uppercase tracking-wider text-fg-muted mb-2">
-          manual_job_listing_urls <span class="tabular-nums" x-text="'(' + total + ')'"></span>
+          manual_job_listing_urls, waiting for HTML <span class="tabular-nums" x-text="'(' + total + ')'"></span>
         </h2>
-        <p x-show="!items.length" class="text-sm text-fg-muted">Nothing stored yet.</p>
+        <p x-show="!items.length" class="text-sm text-fg-muted">Nothing waiting: every stored link has its HTML (or its page is gone).</p>
         <div x-show="items.length" class="overflow-x-auto rounded-lg border border-ink-border">
           <table class="w-full text-sm">
             <thead class="bg-ink-raised text-[11px] uppercase tracking-wider text-fg-muted text-left">
@@ -122,7 +122,7 @@
           },
           async load(freshUrls = new Set()) {
             try {
-              const res = await fetch("/api/workspace/manual-job-listing-urls?limit=500");
+              const res = await fetch("/api/workspace/manual-job-listing-urls?limit=500&hide_processed=true");
               if (!res.ok) throw new Error("HTTP " + res.status);
               const body = await res.json();
               this.items = body.items.map((i) => ({ ...i, fresh: freshUrls.has(i.url) }));

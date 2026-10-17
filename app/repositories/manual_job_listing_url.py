@@ -34,13 +34,15 @@ def add_many(session: Session, urls: Sequence[str]) -> list[str]:
     return [url for url in unique if url in added]
 
 
-def list_recent(session: Session, limit: int = 200, offset: int = 0) -> Sequence[ManualJobListingUrl]:
-    statement = (
-        select(ManualJobListingUrl)
-        .order_by(ManualJobListingUrl.id.desc())
-        .limit(limit)
-        .offset(offset)
-    )
+def list_recent(
+    session: Session, limit: int = 200, offset: int = 0, *, only_unprocessed: bool = False
+) -> Sequence[ManualJobListingUrl]:
+    """Newest first. `only_unprocessed` leaves out links whose HTML is stored,
+    which includes the ones whose page turned out to be "job not found"."""
+    statement = select(ManualJobListingUrl)
+    if only_unprocessed:
+        statement = statement.where(_unprocessed())
+    statement = statement.order_by(ManualJobListingUrl.id.desc()).limit(limit).offset(offset)
     return session.scalars(statement).all()
 
 
@@ -77,5 +79,7 @@ def processed_urls(session: Session, urls: Sequence[str]) -> set[str]:
     return set(session.scalars(select(RawJobListing.url).where(RawJobListing.url.in_(urls))))
 
 
-def count(session: Session) -> int:
+def count(session: Session, *, only_unprocessed: bool = False) -> int:
+    if only_unprocessed:
+        return count_unprocessed(session)
     return session.scalar(select(func.count()).select_from(ManualJobListingUrl)) or 0

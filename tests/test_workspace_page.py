@@ -89,17 +89,17 @@ def test_jobs_test_is_in_the_workspace_navigation(app_server: str, page: Page):
     expect(nav.get_by_role("link", name="Jobs test")).to_have_attribute("aria-current", "page")
 
 
-def test_listing_urls_process_button_follows_the_processed_flag(app_server: str, page: Page):
+def test_listing_urls_hides_processed_links(app_server: str, page: Page):
     items = page.request.get(f"{app_server}/api/workspace/manual-job-listing-urls").json()["items"]
     if not items:
         pytest.skip("no collected urls")
 
     page.goto(f"{app_server}/workspace/urls")
-    for item in items[:5]:
-        row = page.locator("tr", has_text=item["url"]).first
-        button = row.get_by_role("button")
+    expect(page.get_by_role("heading", name="Listing URLs")).to_be_visible()
+    page.wait_for_load_state("networkidle")
+    for item in items[:10]:
+        row = page.locator("tr", has_text=item["url"])
         if item["processed"]:
-            expect(button).to_be_disabled()
-            expect(button).to_have_text("Processed")
+            expect(row).to_have_count(0)
         else:
-            expect(button).to_be_enabled()
+            expect(row.get_by_role("button", name="Process")).to_be_enabled()
