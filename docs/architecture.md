@@ -61,6 +61,8 @@ Supporting trees, outside the runtime path:
 | `html/board.html` | The job board: Tailwind + Alpine, served at `/board` |
 | `html/companies.html` | The employers browser, served at `/companies` |
 | `app/api/workspace.py` | HTTP API behind the workspace section: submit and list raw job listings (ADR-0012) |
+| `app/llm/global_grader.py` | Grader for vacancies from any country: the model reports restrictions with quotes, code checks them against the profile (ADR-0015); `global_prompts.py`, `geo.py` support it |
+| `app/services/listing_grading.py`, `app/workflows/listing_grading.py` | Grade a parsed listing on the `llm` queue, then create the job, its text and its grade together |
 | `app/parsers/` | Listing parsers: platform from the URL, one pure parser per platform returning `JobCreate` (ADR-0014) |
 | `app/text/dom.py` | Small stdlib HTML tree used by the parsers |
 | `app/workflows/listing_processing.py` | `process_raw_listing_workflow`: raw listing -> parse -> `jobs_test` |

@@ -28,6 +28,7 @@ from typing import Any, Optional
 from dbos import DBOS, SetWorkflowID
 
 from app.config import get_settings
+from app.db.models.job import SOURCE_NVB
 from app.db.session import session_scope
 from app.integrations.gpu import gpu_temperature
 from app.integrations.nvb import fetch_jobs_page, to_job_creates
@@ -223,6 +224,7 @@ def prepare_text(job_id: int, target_language: str, profile_name: str) -> dict:
         return {
             "job_id": job_id,
             "found": True,
+            "source": job.source,
             "title": job.title,
             "company": job.company.name if job.company else None,
             "location": job.city,
@@ -478,6 +480,14 @@ def enrich_job_workflow(
     if not prepared["found"]:
         log.warning("enrich: job %s no longer exists", job_id)
         return {"job_id": job_id, "status": "missing"}
+    # Only Nationale Vacaturebank vacancies belong to this Dutch pipeline. Jobs
+    # from other sources are graded by their own workflow when they are
+    # created; running them through here would overwrite that grade with a
+    # Netherlands-specific one. `.get` because a recovered run may replay a
+    # prepare_text result recorded before this key existed.
+    if prepared.get("source", SOURCE_NVB) != SOURCE_NVB:
+        log.info("enrich: job %s is not an NVB vacancy (%s), skipping", job_id, prepared["source"])
+        return {"job_id": job_id, "status": "not_nvb"}
     if not prepared["text"]:
         log.info("enrich: job %s has no usable description", job_id)
         return {"job_id": job_id, "status": "no_description"}
@@ -800,7 +810,11 @@ def select_for_enrichment(
                 & (JobAssessment.profile_name == profile_name)
                 & (JobAssessment.prompt_version == ASSESSMENT_PROMPT_VERSION),
             )
-            .where(Job.id.in_(job_ids), Job.description.is_not(None))
+            .where(
+                Job.id.in_(job_ids),
+                Job.description.is_not(None),
+                Job.source == SOURCE_NVB,  # other sources are graded on creation (ADR-0015)
+            )
         ).all()
 
     needing = [job_id for job_id, translation, assessment in rows if not (translation and assessment)]

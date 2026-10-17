@@ -15,7 +15,7 @@ from sqlalchemy import Select, and_, or_, select
 from sqlalchemy.orm import Session
 
 from app.db.models.enrichment import JobAssessment, JobTranslation
-from app.db.models.job import Job
+from app.db.models.job import SOURCE_NVB, Job
 
 
 class EnrichmentRepositoryError(Exception):
@@ -110,7 +110,12 @@ def pending_translation(
     the freshly computed hash; this query covers "never done" and "done by an
     older prompt".
     """
-    query = select(Job).where(_needs_translation_clause(prompt_version, target_language))
+    query = select(Job).where(
+        _needs_translation_clause(prompt_version, target_language),
+        # Only Nationale Vacaturebank vacancies use this (Dutch) pipeline;
+        # other sources are graded when they are created (ADR-0015).
+        Job.source == SOURCE_NVB,
+    )
     if only_with_description:
         query = query.where(Job.description.is_not(None))
     query = query.order_by(Job.start_date.desc().nullslast(), Job.id).limit(limit)
@@ -241,7 +246,10 @@ def pending_assessment(
     if prompt_version:
         conditions.append(JobAssessment.prompt_version == prompt_version)
 
-    query = select(Job).where(~existing.where(and_(*conditions)).exists())
+    query = select(Job).where(
+        ~existing.where(and_(*conditions)).exists(),
+        Job.source == SOURCE_NVB,  # see pending_translation
+    )
     if only_with_description:
         query = query.where(Job.description.is_not(None))
     query = query.order_by(Job.start_date.desc().nullslast(), Job.id).limit(limit)

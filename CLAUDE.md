@@ -123,6 +123,14 @@ that conflation was the original bug and ADR-0008 explains it.
 Profiles live in `profiles/<name>.json`; `LLM_DEFAULT_PROFILE` picks one.
 Assessments are keyed `(job_id, profile_name)`, so profiles never mix.
 
+## Vacancies from other sources
+
+Listings from Ashby and future platforms are parsed (`app/parsers/`), graded by
+`app/llm/global_grader.py` (not `service.assess_job`) and only then created
+(`process_listing_workflow`). The Dutch pipeline above is for `source == "nvb"`
+only and is fenced off from the rest in the pending queries and
+`enrich_job_workflow`; do not widen it. See ADR-0015.
+
 ## Gotchas that will cost you time
 
 - **`register_queues()` must be called AFTER `DBOS.launch()`** — it writes to

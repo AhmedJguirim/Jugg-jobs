@@ -88,6 +88,21 @@
         </div>
       </form>
 
+      <!-- Grading runs in the background once a listing is saved; one line per run. -->
+      <section x-show="runs.length" class="mb-6" aria-label="Processing">
+        <h2 class="text-[11px] uppercase tracking-wider text-fg-muted mb-2">Processing</h2>
+        <ul class="space-y-2">
+          <template x-for="run in runs" :key="run.id">
+            <li class="rounded-lg border px-4 py-2 text-sm"
+                :class="run.tone === 'ok' ? 'border-ok/40 bg-ok/10' : run.tone === 'bad' ? 'border-danger/40 bg-danger/10' : 'border-ink-border bg-ink-raised'">
+              <div class="break-all text-xs text-fg-muted" x-text="'#' + run.id + ' · ' + run.url"></div>
+              <div class="mt-0.5" x-text="run.text"></div>
+              <a x-show="run.jobId" href="/board" class="text-xs text-lily underline">Open the board</a>
+            </li>
+          </template>
+        </ul>
+      </section>
+
       <section>
         <h2 class="text-[11px] uppercase tracking-wider text-fg-muted mb-2">
           Stored <span class="tabular-nums" x-text="'(' + total + ')'"></span>
@@ -147,6 +162,55 @@
               this.error = "Could not fetch the next link: " + e.message;
             }
           },
+          runs: [],
+          // Follow a grading run until it finishes, updating its line.
+          track(saved) {
+            const run = { id: saved.id, url: saved.url, text: "Waiting for the model…", tone: "", jobId: null };
+            this.runs.unshift(run);
+            const poll = async () => {
+              try {
+                const res = await fetch("/api/workspace/raw-job-listings/process/" + saved.workflow_id);
+                const body = await res.json();
+                if (body.status === "SUCCESS") return this.finish(run, body.result);
+                if (body.status === "ERROR" || body.status === "CANCELLED") {
+                  run.text = "Processing failed (" + body.status.toLowerCase() + "). The listing is saved; process it again later.";
+                  run.tone = "bad";
+                  return;
+                }
+              } catch (e) {
+                run.text = "Lost track of this run: " + e.message;
+                run.tone = "bad";
+                return;
+              }
+              setTimeout(poll, 2000);
+            };
+            poll();
+          },
+          finish(run, r) {
+            const reason = r.reason ? " " + r.reason : "";
+            switch (r.status) {
+              case "stored":
+                run.jobId = r.job_id;
+                run.text = `Job #${r.job_id} ${r.created ? "created" : "updated"}: fit ${r.fit_score} (${(r.verdict || "").replace("_", " ")}), ${r.eligibility}` +
+                  (r.blocked && r.red_flags.length ? " - " + r.red_flags[0] : "");
+                run.tone = r.blocked ? "bad" : "ok";
+                break;
+              case "up_to_date":
+                run.jobId = r.job_id;
+                run.text = `Job #${r.job_id} was already graded; nothing changed.`;
+                run.tone = "ok";
+                break;
+              case "not_found":
+                run.text = "The platform says this job no longer exists. Nothing was created.";
+                break;
+              case "unsupported":
+                run.text = "No parser for this site yet; the HTML is saved.";
+                break;
+              default:
+                run.text = r.status.replace("_", " ") + "." + reason;
+                run.tone = "bad";
+            }
+          },
           skip() {
             this.skipped += 1;
             this.nextUrl();
@@ -178,6 +242,7 @@
               }
               const saved = await res.json();
               this.notice = "Saved as #" + saved.id + ".";
+              if (saved.workflow_id) this.track(saved);
               this.form = { url: "", html_body: "" };
               await this.load();
               // The saved link drops out of the "next" list, so the offset

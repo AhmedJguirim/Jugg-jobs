@@ -17,7 +17,8 @@ from app.repositories import raw_job_listing as repo
 from app.repositories.raw_job_listing import RawJobListingNotFound
 from app.schemas.raw_job_listing import RawJobListingCreate
 from app.text.search_results import extract_result_urls
-from app.workflows.listing_processing import process_raw_listing_workflow
+from app.parsers import detect_platform
+from app.workflows.listing_grading import process_listing_workflow
 
 router = APIRouter(tags=["workspace"])
 
@@ -38,6 +39,12 @@ def _summary(listing, body_chars: int | None = None) -> dict:
     return row
 
 
+def _start_processing(listing_id: int, profile: str | None = None, force: bool = False) -> str:
+    """Start the grade-and-create workflow for one stored listing."""
+    handle = DBOS.start_workflow(process_listing_workflow, listing_id, profile, force)
+    return handle.workflow_id
+
+
 @router.post("/api/workspace/raw-job-listings", status_code=201)
 def submit_raw_job_listing(body: RawJobListingIn):
     if not body.url.strip() or not body.html_body.strip():
@@ -46,7 +53,14 @@ def submit_raw_job_listing(body: RawJobListingIn):
         listing = repo.create(
             session, RawJobListingCreate(url=body.url, html_body=body.html_body)
         )
-        return _summary(listing, len(listing.html_body))
+        summary = _summary(listing, len(listing.html_body))
+    # After the commit above, so the workflow can read the row it is given.
+    # A url on a platform with a parser is graded and turned into a job; any
+    # other (including Nationale Vacaturebank, which has its own pipeline) is
+    # only stored.
+    if detect_platform(summary["url"]):
+        summary["workflow_id"] = _start_processing(summary["id"])
+    return summary
 
 
 @router.get("/api/workspace/raw-job-listings")
@@ -72,15 +86,14 @@ def get_raw_job_listing(listing_id: int):
 
 
 @router.post("/api/workspace/raw-job-listings/{listing_id}/process", status_code=202)
-def process_raw_job_listing(listing_id: int):
-    """Start the workflow that parses one stored listing into `jobs_test`."""
+def process_raw_job_listing(listing_id: int, profile: str | None = None, force: bool = False):
+    """Start the workflow that parses, grades and creates a job from one stored listing."""
     with session_scope() as session:
         try:
             repo.get(session, listing_id)
         except RawJobListingNotFound:
             raise HTTPException(status_code=404, detail="raw job listing not found")
-    handle = DBOS.start_workflow(process_raw_listing_workflow, listing_id)
-    return {"workflow_id": handle.workflow_id}
+    return {"workflow_id": _start_processing(listing_id, profile, force)}
 
 
 @router.get("/api/workspace/raw-job-listings/process/{workflow_id}")
