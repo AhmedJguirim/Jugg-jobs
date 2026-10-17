@@ -91,6 +91,23 @@ def get_raw_job_listing(listing_id: int):
         return {**_summary(listing, len(listing.html_body)), "html_body": listing.html_body}
 
 
+@router.post("/api/workspace/raw-job-listings/{listing_id}/remove")
+def remove_raw_job_listing(listing_id: int):
+    """Drop a listing - and its link - for good, e.g. a page that can never be read.
+
+    The listing leaves the waiting list and the link leaves the collected URLs
+    (it is kept as removed, so pasting the same Google results again does not
+    bring it back). Nothing is deleted from the database.
+    """
+    with session_scope() as session:
+        try:
+            listing = repo.remove(session, listing_id)
+        except RawJobListingNotFound:
+            raise HTTPException(status_code=404, detail="raw job listing not found")
+        url_repo.remove(session, listing.url)
+        return {"id": listing_id, "removed": True}
+
+
 @router.post("/api/workspace/raw-job-listings/{listing_id}/process", status_code=202)
 def process_raw_job_listing(listing_id: int, profile: str | None = None, force: bool = False):
     """Start the workflow that parses, grades and creates a job from one stored listing."""
@@ -205,6 +222,17 @@ def extract_manual_job_listing_urls(body: SearchResultsIn):
         "skipped": len(urls) - len(added),
         "urls": [{"url": url, "added": url in added_set} for url in urls],
     }
+
+
+class UrlIn(BaseModel):
+    url: str = Field(min_length=1)
+
+
+@router.post("/api/workspace/manual-job-listing-urls/remove")
+def remove_manual_job_listing_url(body: UrlIn):
+    """Remove a collected link, so it is never offered for processing again."""
+    with session_scope() as session:
+        return {"removed": url_repo.remove(session, body.url.strip())}
 
 
 @router.get("/api/workspace/manual-job-listing-urls/next")

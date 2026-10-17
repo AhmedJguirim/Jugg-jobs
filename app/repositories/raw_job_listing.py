@@ -23,6 +23,7 @@ GRADED = "graded"
 NOT_FOUND = "not_found"
 UNPARSEABLE = "unparseable"
 UNSUPPORTED = "unsupported"
+REMOVED = "removed"  # the user dropped it; kept, but never listed again
 
 
 def _waiting():
@@ -72,6 +73,15 @@ def count(session: Session, *, waiting: bool = False) -> int:
     if waiting:
         statement = statement.where(_waiting())
     return session.scalar(statement) or 0
+
+
+def remove(session: Session, listing_id: int) -> RawJobListing:
+    """Drop a listing from the waiting list for good (the row is kept)."""
+    listing = get(session, listing_id)
+    listing.status = REMOVED
+    listing.processed_at = func.now()
+    session.flush()
+    return listing
 
 
 def mark(

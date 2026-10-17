@@ -6,7 +6,7 @@ Same contract as the other repositories: explicit `Session`, `flush()` but never
 
 from typing import Sequence
 
-from sqlalchemy import exists, func, select
+from sqlalchemy import exists, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -34,12 +34,29 @@ def add_many(session: Session, urls: Sequence[str]) -> list[str]:
     return [url for url in unique if url in added]
 
 
+def _live():
+    """Links the user has not removed."""
+    return ManualJobListingUrl.removed_at.is_(None)
+
+
+def remove(session: Session, url: str) -> bool:
+    """Remove a link for good: it leaves every list and queue, but the row stays,
+    so the unique url keeps it from being added again by a later paste. Returns
+    whether a (not yet removed) link was found."""
+    result = session.execute(
+        update(ManualJobListingUrl)
+        .where(ManualJobListingUrl.url == url, _live())
+        .values(removed_at=func.now())
+    )
+    return result.rowcount > 0
+
+
 def list_recent(
     session: Session, limit: int = 200, offset: int = 0, *, only_unprocessed: bool = False
 ) -> Sequence[ManualJobListingUrl]:
     """Newest first. `only_unprocessed` leaves out links whose HTML is stored,
     which includes the ones whose page turned out to be "job not found"."""
-    statement = select(ManualJobListingUrl)
+    statement = select(ManualJobListingUrl).where(_live())
     if only_unprocessed:
         statement = statement.where(_unprocessed())
     statement = statement.order_by(ManualJobListingUrl.id.desc()).limit(limit).offset(offset)
@@ -59,7 +76,7 @@ def next_unprocessed(session: Session, skip: int = 0) -> ManualJobListingUrl | N
     """
     statement = (
         select(ManualJobListingUrl)
-        .where(_unprocessed())
+        .where(_unprocessed(), _live())
         .order_by(ManualJobListingUrl.id)
         .offset(skip)
         .limit(1)
@@ -68,7 +85,7 @@ def next_unprocessed(session: Session, skip: int = 0) -> ManualJobListingUrl | N
 
 
 def count_unprocessed(session: Session) -> int:
-    statement = select(func.count()).select_from(ManualJobListingUrl).where(_unprocessed())
+    statement = select(func.count()).select_from(ManualJobListingUrl).where(_unprocessed(), _live())
     return session.scalar(statement) or 0
 
 
@@ -82,4 +99,4 @@ def processed_urls(session: Session, urls: Sequence[str]) -> set[str]:
 def count(session: Session, *, only_unprocessed: bool = False) -> int:
     if only_unprocessed:
         return count_unprocessed(session)
-    return session.scalar(select(func.count()).select_from(ManualJobListingUrl)) or 0
+    return session.scalar(select(func.count()).select_from(ManualJobListingUrl).where(_live())) or 0

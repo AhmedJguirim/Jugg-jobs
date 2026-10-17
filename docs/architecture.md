@@ -173,7 +173,7 @@ stored exactly as pasted) and `created_at`/`updated_at`. Not yet linked to
 ### Workspace: `raw_job_listings`
 
 `id`, `url`, `html_body` (as pasted), and where it stands (ADR-0016): `status` (NULL = waiting to be graded,
-`graded`, `not_found`, `unparseable`, `unsupported`), `job_id` (the job made from it) and `processed_at`.
+`graded`, `not_found`, `unparseable`, `unsupported`, `removed`), `job_id` (the job made from it) and `processed_at`.
 
 ### Workspace: `jobs_test`
 
@@ -183,7 +183,8 @@ Same columns, indexes and key as `jobs`, written by the listing parsers instead
 ### Workspace: `manual_job_listing_urls`
 
 Result links extracted from a pasted Google `<div id="search">` block (ADR-0013):
-`url` (unique), `scraped_at` (null until scraped) and timestamps. Parsed by
+`url` (unique), `scraped_at` (null until scraped), `removed_at` (set when the user
+removes the link, ADR-0017; the row stays so the link cannot be re-added) and timestamps. Parsed by
 `app/text/search_results.py`; `/workspace/urls` is the page.
 
 ## The view

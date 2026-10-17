@@ -92,6 +92,10 @@
                   class="px-4 py-2 text-sm rounded-md border border-ink-border text-fg-muted hover:text-fg transition disabled:opacity-40">
             Skip this link
           </button>
+          <button type="button" x-show="existing" @click="removeCurrent()" :disabled="saving || !form.url"
+                  class="px-4 py-2 text-sm rounded-md border border-danger/40 text-danger/90 hover:bg-danger/10 transition disabled:opacity-40">
+            Remove this link
+          </button>
           <span x-show="notice" class="text-sm text-ok" x-text="notice" role="status"></span>
           <span x-show="error" class="text-sm text-danger" x-text="error" role="alert"></span>
         </div>
@@ -161,10 +165,17 @@
               <div class="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
                 <a :href="item.url" target="_blank" rel="noopener noreferrer"
                    class="text-lily hover:underline break-all min-w-0 flex-1" x-text="item.url"></a>
-                <button type="button" @click="gradeOne(item)" :disabled="busy(item)"
-                        class="shrink-0 px-3 py-1 text-xs rounded-md border transition"
-                        :class="busy(item) ? 'border-ink-border text-fg-muted/50 cursor-not-allowed' : 'border-splice/50 text-splice hover:bg-splice/10'"
-                        x-text="busy(item) ? 'Grading…' : (item.status === 'unparseable' ? 'Retry' : 'Grade')"></button>
+                <div class="shrink-0 flex items-center gap-2">
+                  <!-- A page that failed can be dropped for good instead of retried. -->
+                  <button type="button" x-show="canRemove(item)" @click="removeListing(item)"
+                          class="px-3 py-1 text-xs rounded-md border border-danger/50 text-danger hover:bg-danger/10 transition">
+                    Remove link
+                  </button>
+                  <button type="button" @click="gradeOne(item)" :disabled="busy(item)"
+                          class="px-3 py-1 text-xs rounded-md border transition"
+                          :class="busy(item) ? 'border-ink-border text-fg-muted/50 cursor-not-allowed' : 'border-splice/50 text-splice hover:bg-splice/10'"
+                          x-text="busy(item) ? 'Grading…' : (item.status === 'unparseable' || runs[item.id]?.problem ? 'Retry' : 'Grade')"></button>
+                </div>
               </div>
               <div class="mt-0.5 flex flex-wrap items-baseline gap-x-3 text-xs">
                 <span class="text-fg-muted tabular-nums" x-text="'#' + item.id + ' · ' + new Date(item.created_at).toLocaleString()"></span>
@@ -246,6 +257,27 @@
             this.skipped += 1;
             this.nextUrl();
           },
+          // Remove the link being shown: it is never offered again (a link that
+          // cannot be a job, a dead company page, a duplicate). Unlike Skip it
+          // does not come back after a reload.
+          async removeCurrent() {
+            if (!this.form.url) return;
+            this.notice = "";
+            this.error = "";
+            try {
+              const res = await fetch("/api/workspace/manual-job-listing-urls/remove", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ url: this.form.url }),
+              });
+              if (!res.ok) throw new Error("HTTP " + res.status);
+              this.notice = "Link removed.";
+              this.form.html_body = ""; // it was for the link just removed
+              await this.nextUrl();
+            } catch (e) {
+              this.error = "Could not remove the link: " + e.message;
+            }
+          },
           async submit() {
             this.saving = true;
             this.notice = "";
@@ -294,6 +326,24 @@
           busy(item) {
             const run = this.runs[item.id];
             return !!run && (run.state === "waiting" || run.state === "running");
+          },
+          // Remove is offered for a listing that failed: its page could not be
+          // read last time, or its latest run ended in a problem.
+          canRemove(item) {
+            const run = this.runs[item.id];
+            return !this.busy(item) && (item.status === "unparseable" || !!(run && run.problem));
+          },
+          async removeListing(item) {
+            if (!this.canRemove(item)) return;
+            try {
+              const res = await fetch(`/api/workspace/raw-job-listings/${item.id}/remove`, { method: "POST" });
+              if (!res.ok) throw new Error("HTTP " + res.status);
+              const { [item.id]: _gone, ...rest } = this.runs;
+              this.runs = rest;
+              await this.loadPending();
+            } catch (e) {
+              this.setRun(item.id, { state: "failed", label: "could not remove: " + e.message, problem: true });
+            }
           },
           setRun(id, patch) {
             this.runs = { ...this.runs, [id]: { ...(this.runs[id] || {}), ...patch } };

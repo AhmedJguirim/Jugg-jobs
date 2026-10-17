@@ -25,3 +25,4 @@ Consequences (what this costs us, including what it rules out).
 | [0014](0014-listing-parsers.md) | Listing parsers and the `jobs_test` table | Accepted |
 | [0015](0015-global-grading.md) | Grading vacancies from anywhere, and creating real jobs | Accepted |
 | [0016](0016-grading-on-demand.md) | Grade listings on demand: a waiting list, single and bulk | Accepted |
+| [0017](0017-removing-links.md) | Removing links for good | Accepted |

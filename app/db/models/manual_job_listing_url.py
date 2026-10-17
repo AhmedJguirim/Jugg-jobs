@@ -25,5 +25,10 @@ class ManualJobListingUrl(Base, TimestampMixin):
     # it - nothing does yet.
     scraped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # Set when the user removes the link (ADR-0017). The row stays, so the unique
+    # url still stops the same link coming back from the next Google paste; every
+    # list and queue just leaves it out.
+    removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"<ManualJobListingUrl id={self.id} url={self.url!r}>"
