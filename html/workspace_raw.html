@@ -12,7 +12,7 @@
     />
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
-      // Same palette as html/app.html and html/board.html.
+      // Same palette as the other pages.
       tailwind.config = {
         theme: {
           extend: {
@@ -43,17 +43,26 @@
   <body class="bg-ink text-fg font-sans min-h-screen antialiased">
     <!--TOPBAR-->
     <div x-data="rawListings()" x-init="init()" x-cloak class="max-w-[900px] mx-auto px-4 sm:px-6 py-6">
-      <header class="mb-6">
-        <a href="/workspace" class="text-xs text-fg-muted hover:text-fg">← Raw listings</a>
-        <h1 class="text-2xl sm:text-3xl font-bold tracking-tight" x-text="existing ? 'Process existing listings' : 'Process other url'"></h1>
-        <p class="text-sm text-fg-muted mt-1" x-show="!existing">
-          Paste a vacancy's link and the full HTML of its page. It is stored untouched.
-        </p>
-        <p class="text-sm text-fg-muted mt-1" x-show="existing">
-          The link comes from your collected URLs. Paste the page's HTML and save: the next link
-          that has no stored HTML yet appears.
-          <span class="text-fg" x-show="!done" x-text="remaining + ' left'"></span>
-        </p>
+      <header class="mb-6 flex items-start justify-between gap-3">
+        <div>
+          <a href="/workspace" class="text-xs text-fg-muted hover:text-fg">← Raw listings</a>
+          <h1 class="text-2xl sm:text-3xl font-bold tracking-tight" x-text="existing ? 'Process existing listings' : 'Process other url'"></h1>
+          <p class="text-sm text-fg-muted mt-1" x-show="!existing">
+            Paste a vacancy's link and the full HTML of its page. It is stored untouched; grading is a separate step below.
+          </p>
+          <p class="text-sm text-fg-muted mt-1" x-show="existing">
+            The link comes from your collected URLs. Paste the page's HTML and save: the next link
+            that has no stored HTML yet appears.
+            <span class="text-fg" x-show="!done" x-text="remaining + ' left'"></span>
+          </p>
+        </div>
+        <button @click="toggleSound()"
+                :title="soundEnabled ? 'Sound on - click to mute' : 'Sound off - click to unmute'"
+                :aria-label="soundEnabled ? 'Mute completion sound' : 'Unmute completion sound'"
+                class="shrink-0 px-3 py-2 text-sm rounded-md border border-ink-border transition"
+                :class="soundEnabled ? 'text-fg hover:border-cyan/60 hover:text-cyan' : 'text-fg-muted/60 hover:text-fg-muted'">
+          <span x-text="soundEnabled ? '♪' : '♪̸'"></span>
+        </button>
       </header>
 
       <div x-show="existing &amp;&amp; done" class="rounded-lg border border-ok/50 bg-ok/10 px-4 py-3 text-sm mb-6">
@@ -88,33 +97,81 @@
         </div>
       </form>
 
-      <!-- Grading runs in the background once a listing is saved; one line per run. -->
-      <section x-show="runs.length" class="mb-6" aria-label="Processing">
-        <h2 class="text-[11px] uppercase tracking-wider text-fg-muted mb-2">Processing</h2>
-        <ul class="space-y-2">
-          <template x-for="run in runs" :key="run.id">
-            <li class="rounded-lg border px-4 py-2 text-sm"
-                :class="run.tone === 'ok' ? 'border-ok/40 bg-ok/10' : run.tone === 'bad' ? 'border-danger/40 bg-danger/10' : 'border-ink-border bg-ink-raised'">
-              <div class="break-all text-xs text-fg-muted" x-text="'#' + run.id + ' · ' + run.url"></div>
-              <div class="mt-0.5" x-text="run.text"></div>
-              <a x-show="run.jobId" href="/board" class="text-xs text-lily underline">Open the board</a>
-            </li>
-          </template>
-        </ul>
+      <!-- ── Bulk grading ───────────────────────────────────────────── -->
+      <section class="rounded-lg border border-ink-border bg-ink-raised p-4 mb-6" aria-label="Bulk grading">
+        <div class="flex flex-wrap items-center gap-3 text-sm">
+          <span class="font-semibold">Bulk grade</span>
+          <span class="text-fg-muted">the first</span>
+          <input type="number" min="1" :max="maxBatch" x-model.number="batchCount" aria-label="How many listings"
+                 class="w-20 bg-ink border border-ink-border rounded-md px-2 py-1.5 text-sm tabular-nums focus:outline-none focus:border-splice/70" />
+          <span class="text-fg-muted" x-text="`of the ${pendingTotal} waiting below`"></span>
+          <button @click="startBatch()" :disabled="batchBusy || !pendingTotal || !(batchCount >= 1)"
+                  class="px-3 py-1.5 rounded-md bg-splice/15 border border-splice/50 text-splice hover:bg-splice/25 disabled:opacity-40 disabled:hover:bg-splice/15 transition"
+                  x-text="`Grade ${Math.min(batchCount || 0, pendingTotal, maxBatch)}`"></button>
+          <span x-show="batchError" class="text-danger" x-text="batchError" role="alert"></span>
+        </div>
+        <p x-show="!batch" class="text-xs text-fg-muted mt-2">
+          Up to 100 at a time, top of the list first. Each is graded exactly like its own Grade button,
+          one after another on the GPU, pausing to cool down when it runs hot. Safe to leave running.
+        </p>
+
+        <div x-show="batch" class="mt-4 border-t border-ink-border pt-3">
+          <div class="flex flex-wrap items-center gap-3 text-sm">
+            <span class="font-semibold tabular-nums"
+                  x-text="`${batchFinished} of ${batch?.counts?.total ?? batch?.listings?.length ?? 0} listings finished`"></span>
+            <span class="text-fg-muted" x-text="batchStatusLabel"></span>
+            <button x-show="batchBusy" @click="cancelBatch()"
+                    class="ml-auto px-3 py-1.5 rounded-md border border-danger/50 text-danger hover:bg-danger/10 transition">
+              Cancel batch
+            </button>
+            <button x-show="!batchBusy" @click="dismissBatch()"
+                    class="ml-auto text-fg-muted hover:text-fg underline underline-offset-2">
+              Dismiss
+            </button>
+          </div>
+          <div class="h-1.5 rounded-full bg-ink-border overflow-hidden mt-2">
+            <div class="h-full bg-splice transition-all duration-500" :style="`width: ${batchPercent}%`"></div>
+          </div>
+          <ol class="mt-3 space-y-1 text-sm">
+            <template x-for="(row, index) in batch?.listings || []" :key="row.id">
+              <li class="flex items-baseline gap-2" :data-batch-listing="row.id">
+                <span class="w-6 shrink-0 text-right text-fg-muted tabular-nums" x-text="index + 1"></span>
+                <span class="w-2 h-2 shrink-0 rounded-full self-center" :class="dot(row)"></span>
+                <span class="truncate max-w-[45%] text-fg-muted" x-text="shortUrl(row.url)"></span>
+                <span class="text-fg-muted">-</span>
+                <span class="truncate" :class="row.problem ? 'text-danger' : (row.state === 'running' ? 'text-cyan' : 'text-fg-muted')"
+                      x-text="row.label || 'waiting for a free slot'"></span>
+              </li>
+            </template>
+          </ol>
+        </div>
       </section>
 
-      <section>
+      <!-- ── Waiting to be graded ───────────────────────────────────── -->
+      <section aria-label="Waiting to be graded">
         <h2 class="text-[11px] uppercase tracking-wider text-fg-muted mb-2">
-          Stored <span class="tabular-nums" x-text="'(' + total + ')'"></span>
+          Waiting to be graded <span class="tabular-nums" x-text="'(' + pendingTotal + ')'"></span>
         </h2>
-        <p x-show="!items.length" class="text-sm text-fg-muted">Nothing submitted yet.</p>
+        <p x-show="!pending.length &amp;&amp; !listLoading" class="text-sm text-fg-muted">
+          Nothing is waiting: every saved listing is graded, gone, or on a site without a parser.
+        </p>
         <ul class="space-y-2">
-          <template x-for="item in items" :key="item.id">
-            <li class="rounded-lg border border-ink-border bg-ink-raised px-4 py-2 text-sm flex flex-wrap items-baseline justify-between gap-x-4">
-              <a :href="item.url" target="_blank" rel="noopener noreferrer"
-                 class="text-lily hover:underline break-all" x-text="item.url"></a>
-              <span class="text-xs text-fg-muted tabular-nums"
-                    x-text="'#' + item.id + ' · ' + new Date(item.created_at).toLocaleString()"></span>
+          <template x-for="item in pending" :key="item.id">
+            <li class="rounded-lg border border-ink-border bg-ink-raised px-4 py-2 text-sm" :data-listing-id="item.id">
+              <div class="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+                <a :href="item.url" target="_blank" rel="noopener noreferrer"
+                   class="text-lily hover:underline break-all min-w-0 flex-1" x-text="item.url"></a>
+                <button type="button" @click="gradeOne(item)" :disabled="busy(item)"
+                        class="shrink-0 px-3 py-1 text-xs rounded-md border transition"
+                        :class="busy(item) ? 'border-ink-border text-fg-muted/50 cursor-not-allowed' : 'border-splice/50 text-splice hover:bg-splice/10'"
+                        x-text="busy(item) ? 'Grading…' : (item.status === 'unparseable' ? 'Retry' : 'Grade')"></button>
+              </div>
+              <div class="mt-0.5 flex flex-wrap items-baseline gap-x-3 text-xs">
+                <span class="text-fg-muted tabular-nums" x-text="'#' + item.id + ' · ' + new Date(item.created_at).toLocaleString()"></span>
+                <span x-show="item.status === 'unparseable' &amp;&amp; !runs[item.id]" class="text-warn">the page could not be read last time</span>
+                <span x-show="runs[item.id]" :class="runs[item.id]?.problem ? 'text-danger' : (runs[item.id]?.state === 'running' ? 'text-cyan' : 'text-fg-muted')"
+                      x-text="runs[item.id]?.label"></span>
+              </div>
             </li>
           </template>
         </ul>
@@ -123,10 +180,10 @@
 
     <script>
       function rawListings() {
+        const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         return {
+          // --- the form -------------------------------------------------------
           form: { url: "", html_body: "" },
-          items: [],
-          total: 0,
           saving: false,
           notice: "",
           error: "",
@@ -134,8 +191,26 @@
           skipped: 0, // links passed over this visit; they come back on reload
           remaining: 0,
           done: false,
+
+          // --- the waiting list and its runs ------------------------------------
+          pending: [],
+          pendingTotal: 0,
+          listLoading: true,
+          runs: {}, // listing id -> { state, label, problem, workflowId }
+
+          // --- the batch --------------------------------------------------------
+          batch: null, // { workflow_id, status, listings, counts }
+          batchCount: 10,
+          batchError: "",
+          maxBatch: 100,
+
+          // --- completion sound (same preference as the employers page) ---------
+          soundEnabled: true,
+          audio: null,
+
           async init() {
-            await this.load();
+            this.loadSoundPreference();
+            await this.loadPending();
             if (this.existing) {
               await this.nextUrl();
               // Arriving from a "Process" button on Listing URLs: that link, not the next in line.
@@ -145,7 +220,12 @@
                 this.done = false;
               }
             }
+            // A batch can run for hours; pick it back up after a reload.
+            const saved = this.savedBatchId();
+            if (saved) this.trackBatch(saved, false);
           },
+
+          // ---- the form ---------------------------------------------------------
           async nextUrl() {
             try {
               const res = await fetch("/api/workspace/manual-job-listing-urls/next?skip=" + this.skipped);
@@ -162,69 +242,9 @@
               this.error = "Could not fetch the next link: " + e.message;
             }
           },
-          runs: [],
-          // Follow a grading run until it finishes, updating its line.
-          track(saved) {
-            const run = { id: saved.id, url: saved.url, text: "Waiting for the model…", tone: "", jobId: null };
-            this.runs.unshift(run);
-            const poll = async () => {
-              try {
-                const res = await fetch("/api/workspace/raw-job-listings/process/" + saved.workflow_id);
-                const body = await res.json();
-                if (body.status === "SUCCESS") return this.finish(run, body.result);
-                if (body.status === "ERROR" || body.status === "CANCELLED") {
-                  run.text = "Processing failed (" + body.status.toLowerCase() + "). The listing is saved; process it again later.";
-                  run.tone = "bad";
-                  return;
-                }
-              } catch (e) {
-                run.text = "Lost track of this run: " + e.message;
-                run.tone = "bad";
-                return;
-              }
-              setTimeout(poll, 2000);
-            };
-            poll();
-          },
-          finish(run, r) {
-            const reason = r.reason ? " " + r.reason : "";
-            switch (r.status) {
-              case "stored":
-                run.jobId = r.job_id;
-                run.text = `Job #${r.job_id} ${r.created ? "created" : "updated"}: fit ${r.fit_score} (${(r.verdict || "").replace("_", " ")}), ${r.eligibility}` +
-                  (r.blocked && r.red_flags.length ? " - " + r.red_flags[0] : "");
-                run.tone = r.blocked ? "bad" : "ok";
-                break;
-              case "up_to_date":
-                run.jobId = r.job_id;
-                run.text = `Job #${r.job_id} was already graded; nothing changed.`;
-                run.tone = "ok";
-                break;
-              case "not_found":
-                run.text = "The platform says this job no longer exists. Nothing was created.";
-                break;
-              case "unsupported":
-                run.text = "No parser for this site yet; the HTML is saved.";
-                break;
-              default:
-                run.text = r.status.replace("_", " ") + "." + reason;
-                run.tone = "bad";
-            }
-          },
           skip() {
             this.skipped += 1;
             this.nextUrl();
-          },
-          async load() {
-            try {
-              const res = await fetch("/api/workspace/raw-job-listings?limit=50");
-              if (!res.ok) throw new Error("HTTP " + res.status);
-              const body = await res.json();
-              this.items = body.items;
-              this.total = body.total;
-            } catch (e) {
-              this.error = "Could not load stored listings: " + e.message;
-            }
           },
           async submit() {
             this.saving = true;
@@ -241,10 +261,9 @@
                 throw new Error(typeof detail === "string" ? detail : "HTTP " + res.status);
               }
               const saved = await res.json();
-              this.notice = "Saved as #" + saved.id + ".";
-              if (saved.workflow_id) this.track(saved);
+              this.notice = "Saved as #" + saved.id + ". It is waiting to be graded below.";
               this.form = { url: "", html_body: "" };
-              await this.load();
+              await this.loadPending();
               // The saved link drops out of the "next" list, so the offset
               // for skipped links stays valid.
               if (this.existing) await this.nextUrl();
@@ -253,6 +272,252 @@
             } finally {
               this.saving = false;
             }
+          },
+
+          // ---- the waiting list --------------------------------------------------
+          async loadPending() {
+            try {
+              const res = await fetch("/api/workspace/raw-job-listings?waiting=true&limit=200");
+              if (!res.ok) throw new Error("HTTP " + res.status);
+              const body = await res.json();
+              this.pending = body.items;
+              this.pendingTotal = body.total;
+            } catch (e) {
+              this.error = "Could not load the waiting listings: " + e.message;
+            } finally {
+              this.listLoading = false;
+            }
+          },
+          shortUrl(url) {
+            return (url || "").replace(/^https?:\/\//, "");
+          },
+          busy(item) {
+            const run = this.runs[item.id];
+            return !!run && (run.state === "waiting" || run.state === "running");
+          },
+          setRun(id, patch) {
+            this.runs = { ...this.runs, [id]: { ...(this.runs[id] || {}), ...patch } };
+          },
+          dot(row) {
+            if (row.problem || row.state === "failed") return "bg-danger";
+            return {
+              waiting: "bg-ink-border",
+              running: "bg-cyan animate-pulse",
+              done: "bg-ok",
+              cancelled: "bg-fg-muted",
+            }[row.state] || "bg-ink-border";
+          },
+
+          // ---- one listing -------------------------------------------------------
+          async gradeOne(item) {
+            if (this.busy(item)) return;
+            this.ensureAudio();
+            this.setRun(item.id, { state: "waiting", label: "starting", problem: false });
+            try {
+              const res = await fetch(`/api/workspace/raw-job-listings/${item.id}/process`, { method: "POST" });
+              if (!res.ok) throw new Error("HTTP " + res.status);
+              const started = await res.json();
+              this.setRun(item.id, { workflowId: started.workflow_id });
+              await this.followOne(item, started.workflow_id);
+            } catch (e) {
+              this.setRun(item.id, { state: "failed", label: "could not start: " + e.message, problem: true });
+            }
+          },
+          async followOne(item, workflowId) {
+            for (;;) {
+              try {
+                const res = await fetch(`/api/workspace/grading/${workflowId}`);
+                if (!res.ok) throw new Error("HTTP " + res.status);
+                const entry = await res.json();
+                this.setRun(item.id, { state: entry.state, label: entry.label, problem: entry.problem });
+                if (!["waiting", "running"].includes(entry.state)) {
+                  await this.loadPending(); // a graded listing leaves the list
+                  entry.problem ? this.playFailure() : this.playSuccess();
+                  return;
+                }
+              } catch (e) {
+                await sleep(3000);
+                continue;
+              }
+              await sleep(2000);
+            }
+          },
+
+          // ---- the batch ---------------------------------------------------------
+          get batchBusy() {
+            return !!this.batch && ["PENDING", "ENQUEUED"].includes(this.batch.status);
+          },
+          get batchFinished() {
+            const c = (this.batch && this.batch.counts) || {};
+            return (c.done || 0) + (c.failed || 0) + (c.cancelled || 0);
+          },
+          get batchPercent() {
+            const total = (this.batch && this.batch.counts && this.batch.counts.total) || 0;
+            return total ? Math.round((this.batchFinished / total) * 100) : 0;
+          },
+          get batchStatusLabel() {
+            if (!this.batch) return "";
+            if (this.batch.cancelling) return "cancelling…";
+            return {
+              PENDING: "running",
+              ENQUEUED: "starting",
+              SUCCESS: "finished",
+              CANCELLED: "cancelled",
+              ERROR: "failed",
+            }[this.batch.status] || this.batch.status.toLowerCase();
+          },
+          savedBatchId() {
+            try {
+              return localStorage.getItem("gradeBatch");
+            } catch (e) {
+              return null;
+            }
+          },
+          saveBatchId(id) {
+            try {
+              if (id) localStorage.setItem("gradeBatch", id);
+              else localStorage.removeItem("gradeBatch");
+            } catch (e) {
+              /* resuming after a reload simply will not work */
+            }
+          },
+          async startBatch() {
+            if (this.batchBusy) return;
+            this.ensureAudio(); // unlock audio now, while there is a user gesture
+            this.batchError = "";
+            try {
+              const res = await fetch("/api/workspace/grading-batch", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ count: Math.min(this.batchCount, this.maxBatch) }),
+              });
+              if (!res.ok) {
+                const detail = await res.json().catch(() => ({}));
+                throw new Error(typeof detail.detail === "string" ? detail.detail : "HTTP " + res.status);
+              }
+              const started = await res.json();
+              this.batch = {
+                workflow_id: started.workflow_id,
+                status: "ENQUEUED",
+                listings: started.listings.map((l) => ({ ...l, state: "waiting", label: "" })),
+                counts: { total: started.listings.length },
+              };
+              this.saveBatchId(started.workflow_id);
+              this.trackBatch(started.workflow_id, true);
+            } catch (e) {
+              this.batchError = "could not start: " + e.message;
+            }
+          },
+          async trackBatch(workflowId, announce) {
+            // `announce` is false when resuming after a reload: a batch that had
+            // already finished should not chime again.
+            for (;;) {
+              let body;
+              try {
+                const res = await fetch(`/api/workspace/grading-batch/${workflowId}`);
+                if (res.status === 404) {
+                  this.saveBatchId(null);
+                  this.batch = null;
+                  return;
+                }
+                if (!res.ok) throw new Error("HTTP " + res.status);
+                body = await res.json();
+              } catch (e) {
+                await sleep(3000);
+                continue;
+              }
+
+              const before = new Map(((this.batch && this.batch.listings) || []).map((l) => [l.id, l.state]));
+              this.batch = { ...body, cancelling: this.batch && this.batch.cancelling && body.status === "PENDING" };
+              this.syncRows(body.listings, before);
+
+              if (!["PENDING", "ENQUEUED"].includes(body.status)) {
+                await this.loadPending();
+                if (announce && body.status === "SUCCESS") {
+                  const allFailed = body.counts.done === 0 && body.counts.total > 0;
+                  allFailed ? this.playFailure() : this.playSuccess();
+                } else if (announce && body.status === "ERROR") {
+                  this.playFailure();
+                }
+                return;
+              }
+              announce = true;
+              await sleep(2000);
+            }
+          },
+          // Mirror each batch listing into the per-row run, so the waiting list
+          // and the batch show the same progress (and a row's own Grade button
+          // cannot start a second run of a listing the batch is on).
+          syncRows(listings, before) {
+            let finishedOne = false;
+            for (const row of listings) {
+              const active = row.state === "waiting" || row.state === "running";
+              this.setRun(row.id, { state: row.state, label: row.label, problem: row.problem, workflowId: row.workflow_id });
+              const wasActive = ["waiting", "running", undefined].includes(before.get(row.id));
+              if (!active && wasActive) finishedOne = true;
+            }
+            if (finishedOne) this.loadPending(); // graded ones leave the list as they finish
+          },
+          async cancelBatch() {
+            if (!this.batch) return;
+            this.batch = { ...this.batch, cancelling: true };
+            try {
+              await fetch(`/api/workspace/grading/${this.batch.workflow_id}/cancel`, { method: "POST" });
+            } catch (e) {
+              this.batchError = "could not cancel: " + e.message;
+            }
+          },
+          dismissBatch() {
+            this.batch = null;
+            this.saveBatchId(null);
+          },
+
+          // ---- completion sound ---------------------------------------------------
+          loadSoundPreference() {
+            try {
+              this.soundEnabled = localStorage.getItem("scrapeSound") !== "off";
+            } catch (e) {
+              this.soundEnabled = true;
+            }
+          },
+          toggleSound() {
+            this.soundEnabled = !this.soundEnabled;
+            try {
+              localStorage.setItem("scrapeSound", this.soundEnabled ? "on" : "off");
+            } catch (e) {
+              /* the choice just will not persist */
+            }
+            if (this.soundEnabled) this.playChime([880, 1318.5], 0.07);
+          },
+          ensureAudio() {
+            // Browsers only allow audio after a user gesture.
+            try {
+              if (!this.audio) this.audio = new (window.AudioContext || window.webkitAudioContext)();
+              if (this.audio.state === "suspended") this.audio.resume();
+            } catch (e) {
+              this.audio = null;
+            }
+          },
+          playChime(freqs, gain) {
+            if (!this.soundEnabled || !this.audio) return;
+            freqs.forEach((freq, i) => {
+              const osc = this.audio.createOscillator();
+              const amp = this.audio.createGain();
+              const start = this.audio.currentTime + i * 0.18;
+              osc.type = "sine";
+              osc.frequency.value = freq;
+              amp.gain.setValueAtTime(gain, start);
+              amp.gain.exponentialRampToValueAtTime(0.0001, start + 0.5);
+              osc.connect(amp).connect(this.audio.destination);
+              osc.start(start);
+              osc.stop(start + 0.5);
+            });
+          },
+          playSuccess() {
+            this.playChime([880, 1318.5], 0.07);
+          },
+          playFailure() {
+            this.playChime([330, 220], 0.07);
           },
         };
       }

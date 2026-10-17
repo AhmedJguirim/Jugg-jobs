@@ -63,6 +63,7 @@ Supporting trees, outside the runtime path:
 | `app/api/workspace.py` | HTTP API behind the workspace section: submit and list raw job listings (ADR-0012) |
 | `app/llm/global_grader.py` | Grader for vacancies from any country: the model reports restrictions with quotes, code checks them against the profile (ADR-0015); `global_prompts.py`, `geo.py` support it |
 | `app/services/listing_grading.py`, `app/workflows/listing_grading.py` | Grade a parsed listing on the `llm` queue, then create the job, its text and its grade together |
+| `app/services/listing_progress.py` | One readable line per listing grading run, and a batch's counts |
 | `app/parsers/` | Listing parsers: platform from the URL, one pure parser per platform returning `JobCreate` (ADR-0014) |
 | `app/text/dom.py` | Small stdlib HTML tree used by the parsers |
 | `app/workflows/listing_processing.py` | `process_raw_listing_workflow`: raw listing -> parse -> `jobs_test` |
@@ -168,6 +169,11 @@ shortlist hides blocked rows by default. See ADR-0007.
 Listings pasted in by hand (ADR-0012): `id`, `url` (text), `html_body` (text,
 stored exactly as pasted) and `created_at`/`updated_at`. Not yet linked to
 `jobs` or processed in any way.
+
+### Workspace: `raw_job_listings`
+
+`id`, `url`, `html_body` (as pasted), and where it stands (ADR-0016): `status` (NULL = waiting to be graded,
+`graded`, `not_found`, `unparseable`, `unsupported`), `job_id` (the job made from it) and `processed_at`.
 
 ### Workspace: `jobs_test`
 

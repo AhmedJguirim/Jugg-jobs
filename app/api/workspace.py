@@ -17,8 +17,11 @@ from app.repositories import raw_job_listing as repo
 from app.repositories.raw_job_listing import RawJobListingNotFound
 from app.schemas.raw_job_listing import RawJobListingCreate
 from app.text.search_results import extract_result_urls
+from app.config import get_settings
 from app.parsers import detect_platform
-from app.workflows.listing_grading import process_listing_workflow
+from app.services import listing_progress
+from app.workflows import listing_grading as grading_flow
+from app.workflows.enrichment import STAGE_EVENT
 
 router = APIRouter(tags=["workspace"])
 
@@ -33,6 +36,8 @@ def _summary(listing, body_chars: int | None = None) -> dict:
         "id": listing.id,
         "url": listing.url,
         "created_at": listing.created_at.isoformat() if listing.created_at else None,
+        "status": listing.status,
+        "job_id": listing.job_id,
     }
     if body_chars is not None:
         row["body_chars"] = body_chars
@@ -41,7 +46,7 @@ def _summary(listing, body_chars: int | None = None) -> dict:
 
 def _start_processing(listing_id: int, profile: str | None = None, force: bool = False) -> str:
     """Start the grade-and-create workflow for one stored listing."""
-    handle = DBOS.start_workflow(process_listing_workflow, listing_id, profile, force)
+    handle = DBOS.start_workflow(grading_flow.process_listing_workflow, listing_id, profile, force)
     return handle.workflow_id
 
 
@@ -49,28 +54,29 @@ def _start_processing(listing_id: int, profile: str | None = None, force: bool =
 def submit_raw_job_listing(body: RawJobListingIn):
     if not body.url.strip() or not body.html_body.strip():
         raise HTTPException(status_code=422, detail="url and html_body must not be blank")
+    # Saving only stores. Grading is a separate, deliberate step (the Grade
+    # button or a batch), because it takes the GPU for minutes. A url on a site
+    # with no parser - Nationale Vacaturebank included, which has its own
+    # pipeline - can never be graded here, so it is marked and never listed.
+    status = None if detect_platform(body.url.strip()) else repo.UNSUPPORTED
     with session_scope() as session:
         listing = repo.create(
-            session, RawJobListingCreate(url=body.url, html_body=body.html_body)
+            session, RawJobListingCreate(url=body.url, html_body=body.html_body), status=status
         )
-        summary = _summary(listing, len(listing.html_body))
-    # After the commit above, so the workflow can read the row it is given.
-    # A url on a platform with a parser is graded and turned into a job; any
-    # other (including Nationale Vacaturebank, which has its own pipeline) is
-    # only stored.
-    if detect_platform(summary["url"]):
-        summary["workflow_id"] = _start_processing(summary["id"])
-    return summary
+        return _summary(listing, len(listing.html_body))
 
 
 @router.get("/api/workspace/raw-job-listings")
 def list_raw_job_listings(
-    limit: int = Query(50, ge=1, le=200), offset: int = Query(0, ge=0)
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    waiting: bool = False,
 ):
+    """`waiting=true`: only the listings still to grade, oldest first."""
     with session_scope() as session:
-        rows = repo.list_recent(session, limit=limit, offset=offset)
+        rows = repo.list_recent(session, limit=limit, offset=offset, waiting=waiting)
         return {
-            "total": repo.count(session),
+            "total": repo.count(session, waiting=waiting),
             "items": [_summary(row) for row in rows],
         }
 
@@ -96,14 +102,88 @@ def process_raw_job_listing(listing_id: int, profile: str | None = None, force: 
     return {"workflow_id": _start_processing(listing_id, profile, force)}
 
 
-@router.get("/api/workspace/raw-job-listings/process/{workflow_id}")
-def process_raw_job_listing_result(workflow_id: str):
-    """Poll a processing run; the result carries its `status` once finished."""
-    handle = DBOS.retrieve_workflow(workflow_id)
-    status = handle.get_status().status
-    if status != "SUCCESS":
-        return {"status": status}
-    return {"status": status, "result": handle.get_result()}
+def _grading_entry(workflow_id: str, listing: dict) -> dict:
+    """Where one listing's grading run has got to, as one readable line.
+
+    Progress is read from the run's DBOS status and from its grading step (whose
+    id is derived from the run's), so no extra bookkeeping is stored.
+    """
+    status = DBOS.get_workflow_status(workflow_id)
+    state = listing_progress.state_of(status.status if status else None)
+    entry: dict = {**listing, "workflow_id": workflow_id, "state": state, "problem": False}
+
+    if state == "waiting":
+        entry["label"] = "waiting for a free slot"
+    elif state == "running":
+        grade_id = grading_flow.grade_child_id(workflow_id)
+        grade = DBOS.get_workflow_status(grade_id)
+        grade_state = listing_progress.state_of(grade.status) if grade else None
+        stage = DBOS.get_event(grade_id, STAGE_EVENT, timeout_seconds=0) if grade_state == "running" else None
+        entry["label"] = listing_progress.running_label(grade_state, stage)
+    elif state == "done":
+        result = DBOS.retrieve_workflow(workflow_id).get_result()
+        entry["label"], entry["problem"] = listing_progress.finished_label(result)
+        entry["result"] = result
+    elif state == "cancelled":
+        entry["label"] = "cancelled - nothing was saved for this listing"
+    else:
+        entry["label"], entry["problem"] = "failed - see the logs", True
+    return entry
+
+
+@router.get("/api/workspace/grading/{workflow_id}")
+def grading_status(workflow_id: str):
+    """Poll one listing's grading run (started by its Grade button)."""
+    if DBOS.get_workflow_status(workflow_id) is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    return _grading_entry(workflow_id, {})
+
+
+@router.post("/api/workspace/grading/{workflow_id}/cancel")
+def cancel_grading(workflow_id: str):
+    """Cancel a run or a batch, and the grading steps it queued."""
+    if DBOS.get_workflow_status(workflow_id) is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    DBOS.cancel_workflow(workflow_id, cancel_children=True)
+    return {"workflow_id": workflow_id, "cancelled": True}
+
+
+class GradeBatch(BaseModel):
+    count: int = Field(default=10, ge=1, le=grading_flow.MAX_BATCH)
+    profile: str | None = None
+
+
+@router.post("/api/workspace/grading-batch")
+def start_grading_batch(body: GradeBatch):
+    """Grade the first `count` waiting listings, one after another on the GPU.
+
+    Each runs the same flow as its own Grade button. Returns at once with the
+    batch's id and the listings it picked.
+    """
+    with session_scope() as session:
+        rows = repo.list_recent(session, limit=body.count, offset=0, waiting=True)
+        listings = [{"id": row.id, "url": row.url} for row in rows]
+    if not listings:
+        raise HTTPException(status_code=400, detail="no listing is waiting to be graded")
+    profile = body.profile or get_settings().llm_default_profile
+    handle = DBOS.start_workflow(grading_flow.grade_listings_workflow, listings, profile)
+    return {"workflow_id": handle.workflow_id, "listings": listings}
+
+
+@router.get("/api/workspace/grading-batch/{batch_id}")
+def grading_batch_status(batch_id: str):
+    """Poll a batch: its own status plus one progress line per listing."""
+    status = DBOS.get_workflow_status(batch_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="batch not found")
+    listings = DBOS.get_event(batch_id, "listings", timeout_seconds=0) or []
+    rows = [_grading_entry(grading_flow.batch_child_id(batch_id, item["id"]), item) for item in listings]
+    return {
+        "workflow_id": batch_id,
+        "status": status.status,
+        "listings": rows,
+        "counts": listing_progress.batch_summary(rows),
+    }
 
 
 class SearchResultsIn(BaseModel):

@@ -85,30 +85,3 @@ class TestApi:
 
     def test_unknown_id_is_404(self, client):
         assert client.get("/api/workspace/raw-job-listings/999999").status_code == 404
-
-
-class TestSavingStartsGrading:
-    @pytest.fixture
-    def started(self, client, monkeypatch):
-        calls = []
-        monkeypatch.setattr(workspace, "_start_processing", lambda listing_id, *a, **k: calls.append(listing_id) or "wf-1")
-        return calls
-
-    def save(self, client, url):
-        return client.post("/api/workspace/raw-job-listings", json={"url": url, "html_body": BODY})
-
-    def test_a_platform_with_a_parser_is_processed(self, client, started):
-        response = self.save(client, "https://jobs.ashbyhq.com/acme/ac527b20-e9fc-41d1-841c-bc881e2abef6")
-
-        assert response.status_code == 201
-        assert response.json()["workflow_id"] == "wf-1" and started == [response.json()["id"]]
-
-    def test_other_urls_are_only_stored(self, client, started):
-        response = self.save(client, "https://example.test/job/1")
-
-        assert "workflow_id" not in response.json() and started == []
-
-    def test_nationale_vacaturebank_is_left_to_its_own_pipeline(self, client, started):
-        response = self.save(client, "https://www.nationalevacaturebank.nl/vacature/123/dev")
-
-        assert "workflow_id" not in response.json() and started == []

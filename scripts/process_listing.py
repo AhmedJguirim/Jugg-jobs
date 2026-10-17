@@ -30,7 +30,7 @@ from app.db.session import session_scope  # noqa: E402
 from app.integrations.ollama import health  # noqa: E402
 from app.repositories import raw_job_listing as raw_repo  # noqa: E402
 from app.workflows import enrichment as flow  # noqa: E402
-from app.workflows.listing_grading import process_listing_workflow  # noqa: E402
+from app.workflows.listing_grading import process_listing_workflow, register_queue  # noqa: E402
 
 
 def main() -> int:
@@ -63,6 +63,7 @@ def main() -> int:
     DBOS.launch()
     # After launch: register_queue writes to the system database.
     flow.register_queues()
+    register_queue()
     try:
         for listing_id in ids:
             result = DBOS.start_workflow(

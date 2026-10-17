@@ -103,3 +103,20 @@ def test_listing_urls_hides_processed_links(app_server: str, page: Page):
             expect(row).to_have_count(0)
         else:
             expect(row.get_by_role("button", name="Process")).to_be_enabled()
+
+
+def test_form_page_lists_only_waiting_listings_and_offers_bulk_grading(app_server: str, page: Page):
+    waiting = page.request.get(f"{app_server}/api/workspace/raw-job-listings?waiting=true&limit=200").json()
+
+    page.goto(f"{app_server}/workspace/raw/other")
+
+    expect(page.get_by_role("region", name="Bulk grading")).to_be_visible()
+    expect(page.get_by_role("spinbutton", name="How many listings")).to_have_value("10")
+    section = page.get_by_role("region", name="Waiting to be graded")
+    expect(section.get_by_role("heading")).to_contain_text(f"({waiting['total']})")
+    for item in waiting["items"][:5]:
+        row = section.locator(f"li[data-listing-id='{item['id']}']")
+        expect(row.get_by_role("button", name="Grade")).to_be_enabled()
+    for graded in page.request.get(f"{app_server}/api/workspace/raw-job-listings?limit=50").json()["items"]:
+        if graded["status"] == "graded":
+            expect(section.locator(f"li[data-listing-id='{graded['id']}']")).to_have_count(0)

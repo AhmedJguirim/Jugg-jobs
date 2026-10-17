@@ -4,9 +4,9 @@ Same contract as the other repositories: an explicit `Session`, `flush()` but
 never `commit()`, and domain errors instead of SQLAlchemy exceptions.
 """
 
-from typing import Sequence
+from typing import Optional, Sequence
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session, load_only
 
 from app.db.models.raw_job_listing import RawJobListing
@@ -19,8 +19,22 @@ class RawJobListingNotFound(Exception):
         self.identifier = identifier
 
 
-def create(session: Session, payload: RawJobListingCreate) -> RawJobListing:
-    listing = RawJobListing(url=payload.url.strip(), html_body=payload.html_body)
+GRADED = "graded"
+NOT_FOUND = "not_found"
+UNPARSEABLE = "unparseable"
+UNSUPPORTED = "unsupported"
+
+
+def _waiting():
+    """Listings still to grade: never processed, or a page that could not be
+    read (which may work after a parser fix, so it stays on the list)."""
+    return or_(RawJobListing.status.is_(None), RawJobListing.status == UNPARSEABLE)
+
+
+def create(
+    session: Session, payload: RawJobListingCreate, *, status: Optional[str] = None
+) -> RawJobListing:
+    listing = RawJobListing(url=payload.url.strip(), html_body=payload.html_body, status=status)
     session.add(listing)
     session.flush()
     return listing
@@ -33,17 +47,39 @@ def get(session: Session, listing_id: int) -> RawJobListing:
     return listing
 
 
-def list_recent(session: Session, limit: int = 50, offset: int = 0) -> Sequence[RawJobListing]:
-    """Newest first, without the bodies: they are whole pages of HTML."""
-    statement = (
-        select(RawJobListing)
-        .options(load_only(RawJobListing.id, RawJobListing.url, RawJobListing.created_at))
-        .order_by(RawJobListing.created_at.desc(), RawJobListing.id.desc())
-        .limit(limit)
-        .offset(offset)
+def list_recent(
+    session: Session, limit: int = 50, offset: int = 0, *, waiting: bool = False
+) -> Sequence[RawJobListing]:
+    """Without the bodies: they are whole pages of HTML.
+
+    Newest first; with `waiting=True` only the listings still to grade, oldest
+    first, so "the first N" is the top of the list.
+    """
+    columns = load_only(
+        RawJobListing.id, RawJobListing.url, RawJobListing.created_at,
+        RawJobListing.status, RawJobListing.job_id,
     )
-    return session.scalars(statement).all()
+    statement = select(RawJobListing).options(columns)
+    if waiting:
+        statement = statement.where(_waiting()).order_by(RawJobListing.id)
+    else:
+        statement = statement.order_by(RawJobListing.created_at.desc(), RawJobListing.id.desc())
+    return session.scalars(statement.limit(limit).offset(offset)).all()
 
 
-def count(session: Session) -> int:
-    return session.scalar(select(func.count()).select_from(RawJobListing)) or 0
+def count(session: Session, *, waiting: bool = False) -> int:
+    statement = select(func.count()).select_from(RawJobListing)
+    if waiting:
+        statement = statement.where(_waiting())
+    return session.scalar(statement) or 0
+
+
+def mark(
+    session: Session, listing_id: int, status: str, *, job_id: Optional[int] = None
+) -> None:
+    """Record how processing ended. Quiet if the listing is gone."""
+    session.execute(
+        update(RawJobListing)
+        .where(RawJobListing.id == listing_id)
+        .values(status=status, job_id=job_id, processed_at=func.now())
+    )

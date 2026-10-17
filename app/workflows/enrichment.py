@@ -51,7 +51,8 @@ from app.text import sanitize_description
 #
 # 0.3.0: progress events (`set_event`) in the company scrape and enrichment.
 # 0.4.0: GPU temperature check and cooldown sleep before each vacancy's GPU work.
-APPLICATION_VERSION = "0.4.0"
+# 0.5.0: listing workflow gained mark_step and a known grading-step id (ADR-0016).
+APPLICATION_VERSION = "0.5.0"
 
 # Queue names. The GPU queue's concurrency is the safety property of this module.
 LLM_QUEUE = "llm"

@@ -129,7 +129,8 @@ Listings from Ashby and future platforms are parsed (`app/parsers/`), graded by
 `app/llm/global_grader.py` (not `service.assess_job`) and only then created
 (`process_listing_workflow`). The Dutch pipeline above is for `source == "nvb"`
 only and is fenced off from the rest in the pending queries and
-`enrich_job_workflow`; do not widen it. See ADR-0015.
+`enrich_job_workflow`; do not widen it. Grading is on demand (a Grade button or a
+bulk batch of up to 100), never a side effect of saving HTML. See ADR-0015/0016.
 
 ## Gotchas that will cost you time
 

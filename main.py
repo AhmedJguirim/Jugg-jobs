@@ -625,5 +625,6 @@ if __name__ == "__main__":
     # Nothing is enqueued before this point, so the limits are in force for all
     # work this process starts.
     enrichment_flow.register_queues()
+    listing_grading.register_queue()
     DBOS.register_queue(QUEUE_NAME, worker_concurrency=DEFAULT_WORKER_CONCURRENCY, on_conflict="never_update")
     uvicorn.run(app, host="0.0.0.0", port=8000)
