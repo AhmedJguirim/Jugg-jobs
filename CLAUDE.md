@@ -54,7 +54,7 @@ app/api/                   read-only HTTP for the two pages
 app/workflows/             DBOS workflows, steps, queue registration
 app/services/              flows: order multiple repository/client calls
 app/repositories/          ALL SQL lives here; no query construction elsewhere
-app/llm/, app/text/, app/integrations/
+app/llm/, app/text/, app/integrations/, app/parsers/   (parsers are pure: html in, JobCreate out)
 app/schemas/, app/db/      DTOs, models, session
 app/config.py              settings from .env
 ```

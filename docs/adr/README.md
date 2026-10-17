@@ -22,3 +22,4 @@ Consequences (what this costs us, including what it rules out).
 | [0011](0011-gpu-cooldown.md) | Pause the GPU queue when the card runs hot | Accepted |
 | [0012](0012-workspace-section.md) | A second section: the workspace | Accepted |
 | [0013](0013-manual-job-listing-urls.md) | Manual job listing URLs from Google results | Accepted |
+| [0014](0014-listing-parsers.md) | Listing parsers and the `jobs_test` table | Accepted |

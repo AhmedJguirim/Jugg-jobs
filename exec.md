@@ -60,6 +60,7 @@ Leave that window open too. Then:
 | <http://localhost:8000/board> | every vacancy, sorted by fit, in English |
 | <http://localhost:8000/companies> | every employer, with a Scrape button each |
 | <http://localhost:8000/workspace> | raw listings: choose **Process existing listings** (walks the collected URLs one by one, link prefilled, you paste its HTML; Skip leaves a link for later) or **Process other url** (blank form). The switch at the top moves between Jobs and Workspace |
+| `python scripts\process_listing.py 1 2 3` | parse stored raw listings (by `raw_job_listings` id, or `--all`) into `jobs_test`; a removed posting is reported as `not_found` and stores nothing |
 | <http://localhost:8000/workspace/urls> | paste a Google results `<div id="search">` block; the result links are stored once each |
 | <http://localhost:8000/> | the DBOS workflow demo (original starter page) |
 

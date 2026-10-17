@@ -61,6 +61,9 @@ Supporting trees, outside the runtime path:
 | `html/board.html` | The job board: Tailwind + Alpine, served at `/board` |
 | `html/companies.html` | The employers browser, served at `/companies` |
 | `app/api/workspace.py` | HTTP API behind the workspace section: submit and list raw job listings (ADR-0012) |
+| `app/parsers/` | Listing parsers: platform from the URL, one pure parser per platform returning `JobCreate` (ADR-0014) |
+| `app/text/dom.py` | Small stdlib HTML tree used by the parsers |
+| `app/workflows/listing_processing.py` | `process_raw_listing_workflow`: raw listing -> parse -> `jobs_test` |
 | `html/workspace.html` | Raw listings form and list, served at `/workspace` |
 | `html/_topbar.html` | Section switch (Jobs / Workspace) and per-section nav, injected into every page by `main.py:render_page` |
 | `app/workflows/` | DBOS workflows/steps; registers the `llm` and `job-ingest` queues |
@@ -161,6 +164,11 @@ shortlist hides blocked rows by default. See ADR-0007.
 Listings pasted in by hand (ADR-0012): `id`, `url` (text), `html_body` (text,
 stored exactly as pasted) and `created_at`/`updated_at`. Not yet linked to
 `jobs` or processed in any way.
+
+### Workspace: `jobs_test`
+
+Same columns, indexes and key as `jobs`, written by the listing parsers instead
+(ADR-0014); not read by the board. The vocabulary links are not copied.
 
 ### Workspace: `manual_job_listing_urls`
 

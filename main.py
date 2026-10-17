@@ -17,6 +17,7 @@ from app.repositories import enrichment as enrichment_repo
 from app.repositories import job as job_repo
 from app.services.job_ingest import DEFAULT_LIMIT, IngestStats
 from app.workflows import enrichment as enrichment_flow
+from app.workflows import listing_processing  # noqa: F401  (registers the workflow)
 from app.logging_setup import log
 
 # Welcome to DBOS!

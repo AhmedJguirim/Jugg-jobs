@@ -7,6 +7,7 @@ returns the body, with its size, for when something needs it.
 
 from __future__ import annotations
 
+from dbos import DBOS
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
@@ -16,6 +17,7 @@ from app.repositories import raw_job_listing as repo
 from app.repositories.raw_job_listing import RawJobListingNotFound
 from app.schemas.raw_job_listing import RawJobListingCreate
 from app.text.search_results import extract_result_urls
+from app.workflows.listing_processing import process_raw_listing_workflow
 
 router = APIRouter(tags=["workspace"])
 
@@ -67,6 +69,28 @@ def get_raw_job_listing(listing_id: int):
         except RawJobListingNotFound:
             raise HTTPException(status_code=404, detail="raw job listing not found")
         return {**_summary(listing, len(listing.html_body)), "html_body": listing.html_body}
+
+
+@router.post("/api/workspace/raw-job-listings/{listing_id}/process", status_code=202)
+def process_raw_job_listing(listing_id: int):
+    """Start the workflow that parses one stored listing into `jobs_test`."""
+    with session_scope() as session:
+        try:
+            repo.get(session, listing_id)
+        except RawJobListingNotFound:
+            raise HTTPException(status_code=404, detail="raw job listing not found")
+    handle = DBOS.start_workflow(process_raw_listing_workflow, listing_id)
+    return {"workflow_id": handle.workflow_id}
+
+
+@router.get("/api/workspace/raw-job-listings/process/{workflow_id}")
+def process_raw_job_listing_result(workflow_id: str):
+    """Poll a processing run; the result carries its `status` once finished."""
+    handle = DBOS.retrieve_workflow(workflow_id)
+    status = handle.get_status().status
+    if status != "SUCCESS":
+        return {"status": status}
+    return {"status": status, "result": handle.get_result()}
 
 
 class SearchResultsIn(BaseModel):
