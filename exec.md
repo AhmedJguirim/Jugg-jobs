@@ -171,7 +171,9 @@ Orange is not a rejection. Most Dutch adverts never mention permits, and those
 land orange by design.
 
 Filters worth knowing: set **Stack** to `core stack` and untick **Show blocked**
-to get the list actually worth your time.
+to get the list actually worth your time. **Language** keeps vacancies written in
+English or Dutch. The list shows 50 vacancies per page (change it, or jump to a
+page, in the pager under the list); changing any filter returns to page 1.
 
 Each card has **Mark applied** and **Archive** buttons (also in the detail
 drawer). Marked vacancies drop out of the default **Show: Open** view; switch

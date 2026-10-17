@@ -45,7 +45,7 @@
 
   <body class="bg-ink text-fg font-sans min-h-screen antialiased">
     <!--TOPBAR-->
-    <div x-data="board()" x-init="load()" x-cloak class="max-w-[1400px] mx-auto px-4 sm:px-6 py-6">
+    <div x-data="board()" x-init="init()" x-cloak class="max-w-[1400px] mx-auto px-4 sm:px-6 py-6">
       <!-- ── Header ─────────────────────────────────────────────────── -->
       <header class="mb-6">
         <div class="flex flex-wrap items-end justify-between gap-3">
@@ -111,7 +111,7 @@
 
       <!-- ── Filters ────────────────────────────────────────────────── -->
       <section class="rounded-lg border border-ink-border bg-ink-raised p-4 mb-6">
-        <div class="grid gap-4 lg:grid-cols-[minmax(0,2fr)_repeat(5,minmax(0,1fr))]">
+        <div class="grid gap-4 lg:grid-cols-[minmax(0,2fr)_repeat(6,minmax(0,1fr))]">
           <div>
             <label class="block text-[11px] uppercase tracking-wider text-fg-muted mb-1">Search</label>
             <input
@@ -145,6 +145,16 @@
               <option value="">Any stack</option>
               <template x-for="tier in facets.stack_tiers" :key="tier">
                 <option :value="tier" x-text="stackLabel(tier)"></option>
+              </template>
+            </select>
+          </div>
+          <div>
+            <label class="block text-[11px] uppercase tracking-wider text-fg-muted mb-1">Language</label>
+            <select x-model="filters.language" aria-label="Language"
+                    class="w-full bg-ink border border-ink-border rounded-md px-3 py-2 text-sm focus:outline-none focus:border-splice/70">
+              <option value="">Any language</option>
+              <template x-for="option in languageOptions" :key="option.value">
+                <option :value="option.value" x-text="option.label"></option>
               </template>
             </select>
           </div>
@@ -197,6 +207,8 @@
           <span class="text-fg font-semibold tabular-nums" x-text="visible.length"></span>
           <span x-text="visible.length === 1 ? ' vacancy' : ' vacancies'"></span>
           <span x-show="visible.length !== jobs.length" x-text="` of ${jobs.length}`"></span>
+          <span x-show="pageCount > 1" class="text-fg-muted"
+                x-text="` · showing ${pageStart + 1}-${Math.min(pageStart + pageSize, visible.length)}`"></span>
         </p>
         <p class="text-xs text-fg-muted" x-show="jobs.length">
           Scores rate the <em>role</em>; dealbreakers are flagged separately.
@@ -220,7 +232,7 @@
 
       <!-- ── List ───────────────────────────────────────────────────── -->
       <ul class="space-y-3">
-        <template x-for="job in visible" :key="job.id">
+        <template x-for="job in pageRows" :key="job.id">
           <li
             @click="open(job)"
             class="group rounded-lg border border-ink-border bg-ink-raised hover:border-splice/50 transition cursor-pointer"
@@ -307,6 +319,34 @@
           </li>
         </template>
       </ul>
+
+      <!-- ── Pager ──────────────────────────────────────────────────── -->
+      <nav x-show="visible.length > 0" class="mt-6 flex flex-wrap items-center justify-center gap-3 text-sm" aria-label="Pages">
+        <button @click="goToPage(0)" :disabled="pageIndex === 0" aria-label="First page"
+                class="px-3 py-1.5 rounded-md border border-ink-border hover:border-splice/60 hover:text-splice transition disabled:opacity-40 disabled:hover:border-ink-border disabled:hover:text-fg">«</button>
+        <button @click="goToPage(pageIndex - 1)" :disabled="pageIndex === 0"
+                class="px-3 py-1.5 rounded-md border border-ink-border hover:border-splice/60 hover:text-splice transition disabled:opacity-40 disabled:hover:border-ink-border disabled:hover:text-fg">Previous</button>
+        <span class="tabular-nums text-fg-muted">
+          Page
+          <input type="number" min="1" :max="pageCount" :value="pageIndex + 1" aria-label="Page number"
+                 @change="goToPage(($event.target.value || 1) - 1)"
+                 class="w-16 bg-ink border border-ink-border rounded-md px-2 py-1 text-center text-fg focus:outline-none focus:border-splice/70" />
+          of <span class="text-fg" x-text="pageCount"></span>
+        </span>
+        <button @click="goToPage(pageIndex + 1)" :disabled="pageIndex >= pageCount - 1"
+                class="px-3 py-1.5 rounded-md border border-ink-border hover:border-splice/60 hover:text-splice transition disabled:opacity-40 disabled:hover:border-ink-border disabled:hover:text-fg">Next</button>
+        <button @click="goToPage(pageCount - 1)" :disabled="pageIndex >= pageCount - 1" aria-label="Last page"
+                class="px-3 py-1.5 rounded-md border border-ink-border hover:border-splice/60 hover:text-splice transition disabled:opacity-40 disabled:hover:border-ink-border disabled:hover:text-fg">»</button>
+        <label class="flex items-center gap-2 text-fg-muted">
+          Per page
+          <select x-model.number="pageSize" @change="page = 0; savePageSize()" aria-label="Vacancies per page"
+                  class="bg-ink border border-ink-border rounded-md px-2 py-1 text-fg focus:outline-none focus:border-splice/70">
+            <template x-for="size in [25, 50, 100, 200]" :key="size">
+              <option :value="size" x-text="size"></option>
+            </template>
+          </select>
+        </label>
+      </nav>
 
       <!-- ── Detail drawer ──────────────────────────────────────────── -->
       <div
@@ -527,6 +567,10 @@
           selected: null,
           detailLoading: false,
           tab: "english",
+          // Pagination is client-side: the list is already in the browser (it is
+          // filtered and sorted there), and the cost of 5000+ cards is the DOM.
+          page: 0,
+          pageSize: 50,
           filters: {
             q: "",
             minScore: 0,
@@ -536,8 +580,73 @@
             hideDutch: false,
             onlyAssessed: false,
             stack: "",
+            // The language the vacancy is written in: "nl", "en", ..., or
+            // "unknown" for one with no language recorded. "" is any.
+            language: "",
             // open | applied | archived | all
             marks: "open",
+          },
+
+          init() {
+            try {
+              const saved = Number(localStorage.getItem("boardPageSize"));
+              if ([25, 50, 100, 200].includes(saved)) this.pageSize = saved;
+            } catch (error) {
+              /* the default page size is fine */
+            }
+            // Any change to a filter or the sort starts again at the first page.
+            this.$watch("filters", () => { this.page = 0; });
+            this.load();
+          },
+
+          // The languages that actually occur, with a count each, English and
+          // Dutch first; vacancies with none recorded are "Not stated".
+          get languageOptions() {
+            const names = { en: "English", nl: "Dutch", unknown: "Not stated" };
+            const counts = new Map();
+            for (const job of this.jobs) {
+              const key = job.source_language || "unknown";
+              counts.set(key, (counts.get(key) || 0) + 1);
+            }
+            const rank = (key) => ({ en: 0, nl: 1, unknown: 99 }[key] ?? 50);
+            return [...counts.entries()]
+              .sort((a, b) => rank(a[0]) - rank(b[0]) || a[0].localeCompare(b[0]))
+              .map(([value, count]) => ({
+                value,
+                label: `${names[value] || value.toUpperCase()} (${count})`,
+              }));
+          },
+
+          get pageCount() {
+            return Math.max(1, Math.ceil(this.visible.length / this.pageSize));
+          },
+
+          // The page actually shown: `page` clamped, because marking a vacancy
+          // applied or archived can shrink the list under the current page.
+          get pageIndex() {
+            return Math.min(this.page, this.pageCount - 1);
+          },
+
+          get pageStart() {
+            return this.pageIndex * this.pageSize;
+          },
+
+          get pageRows() {
+            return this.visible.slice(this.pageStart, this.pageStart + this.pageSize);
+          },
+
+          goToPage(index) {
+            const target = Math.max(0, Math.min(Number(index) || 0, this.pageCount - 1));
+            this.page = target;
+            window.scrollTo({ top: 0, behavior: "smooth" });
+          },
+
+          savePageSize() {
+            try {
+              localStorage.setItem("boardPageSize", String(this.pageSize));
+            } catch (error) {
+              /* the choice just will not persist */
+            }
           },
 
           async load() {
@@ -583,6 +692,7 @@
               if (f.hideDutch && job.dutch_required) return false;
               if (f.city && job.city !== f.city) return false;
               if (f.stack && job.stack_match !== f.stack) return false;
+              if (f.language && (job.source_language || "unknown") !== f.language) return false;
               // Ungraded vacancies have no score; only filter them out once the
               // threshold is actually raised above zero.
               if (f.minScore > 0 && (job.fit_score ?? -1) < f.minScore) return false;
@@ -623,7 +733,7 @@
             this.filters = {
               q: "", minScore: 0, city: "", sort: "fit",
               includeBlocked: true, hideDutch: false, onlyAssessed: false, stack: "",
-              marks: "open",
+              language: "", marks: "open",
             };
           },
 

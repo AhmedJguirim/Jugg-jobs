@@ -183,7 +183,12 @@ def job_detail(job_id: int, profile: str | None = None) -> dict[str, Any]:
 
     The original is returned sanitised rather than raw, because that is what the
     model actually read - useful when a translation looks wrong.
+
+    `profile` defaults to the configured one, as for `/api/board`. Without that
+    default the detail came back with no assessment (nothing matches a NULL
+    profile), so the drawer lost the verdict, flags and model it had on the card.
     """
+    profile = profile or get_settings().llm_default_profile
     with session_scope() as session:
         row = session.execute(
             select(Job, JobAssessment, JobTranslation)

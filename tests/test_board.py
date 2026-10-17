@@ -14,6 +14,14 @@ from playwright.sync_api import Page, expect
 
 pytestmark = pytest.mark.e2e
 
+# "N vacancies" above the list. The list is paginated, so the number of cards on
+# the page is not the number of matches.
+RESULT_COUNT = "p.text-sm.text-fg-muted > span.font-semibold"
+
+
+def matches(board: Page) -> int:
+    return int(board.locator(RESULT_COUNT).first.inner_text())
+
 
 @pytest.fixture
 def board(app_server: str, page: Page) -> Page:
@@ -103,22 +111,21 @@ class TestFilters:
 
     def test_reset_restores_the_list(self, board: Page):
         cards = board.locator("ul > li")
-        before = cards.count()
+        before = matches(board)
         board.get_by_placeholder("title, company, summary…").fill("zzzzzznotathing")
         expect(cards).to_have_count(0)
 
         board.get_by_role("button", name="Reset them").click()
 
-        expect(cards).to_have_count(before)
+        expect(board.locator(RESULT_COUNT).first).to_have_text(str(before))
 
     def test_hiding_blocked_reduces_the_count(self, board: Page):
         """Most of this corpus is blocked, so unticking the box must cut the list."""
-        cards = board.locator("ul > li")
-        before = cards.count()
+        before = matches(board)
 
         board.locator('input[type="checkbox"]').first.uncheck()
 
-        expect(cards).not_to_have_count(before)
+        expect(board.locator(RESULT_COUNT).first).not_to_have_text(str(before))
 
     def test_raising_the_minimum_score_reduces_the_list(self, app_server: str, board: Page):
         # Wait for the full list to render before counting: reading the count
@@ -126,12 +133,12 @@ class TestFilters:
         # The default view hides applied and archived vacancies.
         jobs = board.request.get(f"{app_server}/api/board").json()["jobs"]
         total = sum(1 for job in jobs if not job["applied_at"] and not job["archived_at"])
-        cards = board.locator("ul > li")
-        expect(cards).to_have_count(total)
+        result = board.locator(RESULT_COUNT).first
+        expect(result).to_have_text(str(total))
 
         board.locator('input[type="range"]').fill("90")
 
-        expect(cards).not_to_have_count(total)
+        expect(result).not_to_have_text(str(total))
 
 
 class TestDetailDrawer:
@@ -210,11 +217,12 @@ class TestMarks:
     def test_archiving_from_the_list_hides_the_card(self, board: Page, unmarked_job):
         card = board.locator(f'li[data-job-id="{unmarked_job["id"]}"]')
         expect(card).to_be_visible()
-        before = board.locator("ul > li").count()
+        before = matches(board)
 
         card.get_by_role("button", name="Archive").click()
 
-        expect(board.locator("ul > li")).to_have_count(before - 1)
+        expect(board.locator(RESULT_COUNT).first).to_have_text(str(before - 1))
+        expect(card).to_have_count(0)
 
     def test_archived_filter_shows_it_again(self, board: Page, unmarked_job):
         board.locator(f'li[data-job-id="{unmarked_job["id"]}"]').get_by_role(
@@ -234,3 +242,98 @@ class TestMarks:
 
         expect(card.get_by_role("button", name="Applied ✓")).to_be_visible()
         expect(board.get_by_role("button", name="Show Dutch original")).not_to_be_visible()
+
+
+class TestPagination:
+    """The board shows one page of vacancies at a time (client-side)."""
+
+    def cards(self, board):
+        return board.locator("ul > li[data-job-id]")
+
+    def test_only_one_page_of_cards_is_rendered(self, board):
+        total = board.evaluate("Alpine.$data(document.querySelector('[x-data=\"board()\"]')).visible.length")
+
+        assert total > 50  # the point of paginating
+        expect(self.cards(board)).to_have_count(50)
+        expect(board.get_by_label("Pages")).to_be_visible()
+
+    def test_next_shows_different_vacancies_and_previous_comes_back(self, board):
+        first_page = self.cards(board).first.get_attribute("data-job-id")
+
+        board.get_by_role("button", name="Next").click()
+        expect(board.get_by_label("Page number")).to_have_value("2")
+        assert self.cards(board).first.get_attribute("data-job-id") != first_page
+
+        board.get_by_role("button", name="Previous").click()
+        expect(board.get_by_label("Page number")).to_have_value("1")
+        assert self.cards(board).first.get_attribute("data-job-id") == first_page
+
+    def test_page_size_changes_the_number_of_cards(self, board):
+        board.get_by_label("Vacancies per page").select_option("25")
+
+        expect(self.cards(board)).to_have_count(25)
+        expect(board.get_by_label("Page number")).to_have_value("1")
+
+    def test_changing_a_filter_returns_to_the_first_page(self, board):
+        board.get_by_role("button", name="Next").click()
+        expect(board.get_by_label("Page number")).to_have_value("2")
+
+        board.get_by_label("Show", exact=True).select_option("all")
+
+        expect(board.get_by_label("Page number")).to_have_value("1")
+
+    def test_first_and_last_buttons(self, board):
+        board.get_by_role("button", name="Last page").click()
+        last = board.get_by_label("Page number")
+        assert int(last.input_value()) > 1
+        expect(board.get_by_role("button", name="Next")).to_be_disabled()
+
+        board.get_by_role("button", name="First page").click()
+        expect(last).to_have_value("1")
+        expect(board.get_by_role("button", name="Previous")).to_be_disabled()
+
+
+class TestLanguageFilter:
+    def open_matches(self, app_server: str, board: Page, language: str) -> int:
+        jobs = board.request.get(f"{app_server}/api/board").json()["jobs"]
+        return sum(
+            1 for job in jobs
+            if (job["source_language"] or "unknown") == language
+            and not job["applied_at"] and not job["archived_at"]
+        )
+
+    def test_the_options_are_the_languages_that_occur(self, app_server: str, board: Page):
+        labels = board.get_by_label("Language").locator("option").all_inner_texts()
+
+        assert labels[0] == "Any language"
+        assert any(label.startswith("English (") for label in labels)
+        assert any(label.startswith("Dutch (") for label in labels)
+
+    @pytest.mark.parametrize("language, label", [("en", "English"), ("nl", "Dutch")])
+    def test_choosing_a_language_keeps_only_those_vacancies(self, app_server: str, board: Page, language, label):
+        expected = self.open_matches(app_server, board, language)
+        assert expected > 0, f"no open {label} vacancy to filter to"
+
+        board.get_by_label("Language").select_option(language)
+
+        expect(board.locator(RESULT_COUNT).first).to_have_text(str(expected))
+
+    def test_reset_clears_it(self, app_server: str, board: Page):
+        before = matches(board)
+        board.get_by_label("Language").select_option("nl")
+        expect(board.locator(RESULT_COUNT).first).not_to_have_text(str(before))
+
+        board.get_by_role("button", name="Reset filters").click()
+
+        expect(board.locator(RESULT_COUNT).first).to_have_text(str(before))
+        expect(board.get_by_label("Language")).to_have_value("")
+
+
+def test_detail_keeps_the_grade_the_card_showed(app_server: str, page: Page):
+    """The drawer replaces its card's data with `/api/jobs/{id}`; that must still carry the grade."""
+    graded = next(j for j in page.request.get(f"{app_server}/api/board").json()["jobs"] if j["assessed"])
+
+    detail = page.request.get(f"{app_server}/api/jobs/{graded['id']}").json()
+
+    assert detail["assessed"] is True
+    assert detail["fit_score"] == graded["fit_score"]

@@ -195,9 +195,15 @@ keeps it consistent with the existing `html/app.html`.
 
 Three endpoints back it:
 
-- `GET /api/board` - the whole corpus without the long description bodies, small
-  enough (68 rows) for the page to filter and sort client-side with no round
-  trips, plus headline stats and facet values.
+- `GET /api/board` - the whole corpus without the long description bodies, so the
+  page filters and sorts client-side with no round trips, plus headline stats
+  and facet values. The corpus is now ~5,900 vacancies, so the page **paginates
+  client-side** (25/50/100/200 per page, default 50, remembered in
+  `localStorage`; any filter change returns to page 1): the cost of that many
+  cards is the DOM, not the payload. If the payload itself becomes the problem,
+  the next step is moving the filters server-side as `/api/companies` does.
+  The **Language** filter keeps vacancies by the language they are written in
+  (`source_language` on the translation row: English, Dutch, or not stated).
 - `GET /api/jobs/{id}` - one vacancy including both texts: the English
   translation and the *sanitised* original, which is what the model actually
   read, so a suspect translation can be checked against its input.
