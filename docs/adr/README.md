@@ -27,3 +27,4 @@ Consequences (what this costs us, including what it rules out).
 | [0016](0016-grading-on-demand.md) | Grade listings on demand: a waiting list, single and bulk | Accepted |
 | [0017](0017-removing-links.md) | Removing links for good | Accepted |
 | [0018](0018-cleanup-of-graded-html.md) | Cleaning up the stored HTML of graded listings | Accepted |
+| [0019](0019-greenhouse-parser.md) | A Greenhouse parser, validated before it is hooked in | Accepted |
