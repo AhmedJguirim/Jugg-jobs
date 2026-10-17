@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 
 from app import logging_setup
-from app.api import board_router, companies_router
+from app.api import board_router, companies_router, workspace_router
 from app.db.session import session_scope
 from app.integrations.nvb import fetch_jobs_page, to_job_creates
 from app.integrations.nvb.schema import JobSearchResponse
@@ -41,6 +41,7 @@ DBOS(config=config)
 # APIs behind the views (app/api/).
 app.include_router(board_router)
 app.include_router(companies_router)
+app.include_router(workspace_router)
 
 # Mirror DBOS/uvicorn logs into logs/dev.log alongside our own dev logger.
 logging_setup.attach("dbos", "uvicorn.error")
@@ -120,26 +121,58 @@ def crash_application():
     os._exit(1)
 
 
+def render_page(name: str, section: str) -> HTMLResponse:
+    """Serve html/<name> with the shared top bar (section switch + nav) injected."""
+    with open(os.path.join("html", "_topbar.html"), encoding="utf-8") as file:
+        topbar = file.read().replace("__SECTION__", section)
+    with open(os.path.join("html", name), encoding="utf-8") as file:
+        html = file.read().replace("<!--TOPBAR-->", topbar)
+    return HTMLResponse(html)
+
+
+# ---- Jobs section ----
+
+
 # This endpoint serves the job board: what the flows actually produced.
 @app.get("/board")
 def board_page():
-    with open(os.path.join("html", "board.html"), encoding="utf-8") as file:
-        return HTMLResponse(file.read())
+    return render_page("board.html", "jobs")
 
 
 # This endpoint serves the employer browser.
 @app.get("/companies")
 def companies_page():
-    with open(os.path.join("html", "companies.html"), encoding="utf-8") as file:
-        return HTMLResponse(file.read())
+    return render_page("companies.html", "jobs")
 
 
 # This endpoint serves the HTML frontend.
 @app.get("/")
 def readme():
-    with open(os.path.join("html", "app.html"), encoding="utf-8") as file:
-        html = file.read()
-    return HTMLResponse(html)
+    return render_page("app.html", "jobs")
+
+
+# ---- Workspace section ----
+
+
+# Raw listings: paste a link and a page's HTML, stored as-is.
+@app.get("/workspace")
+def workspace_page():
+    return render_page("workspace.html", "workspace")
+
+
+# The form behind "Process existing listings" (/existing, link prefilled from
+# the collected URLs) and "Process other url" (/other, blank). One page; it
+# reads the mode from its own path.
+@app.get("/workspace/raw/existing")
+@app.get("/workspace/raw/other")
+def workspace_raw_form_page():
+    return render_page("workspace_raw.html", "workspace")
+
+
+# Listing URLs: extract result links from a pasted Google results block.
+@app.get("/workspace/urls")
+def workspace_urls_page():
+    return render_page("workspace_urls.html", "workspace")
 
 
 # ---- Schedule endpoints ----

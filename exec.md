@@ -59,6 +59,8 @@ Leave that window open too. Then:
 |---|---|
 | <http://localhost:8000/board> | every vacancy, sorted by fit, in English |
 | <http://localhost:8000/companies> | every employer, with a Scrape button each |
+| <http://localhost:8000/workspace> | raw listings: choose **Process existing listings** (walks the collected URLs one by one, link prefilled, you paste its HTML; Skip leaves a link for later) or **Process other url** (blank form). The switch at the top moves between Jobs and Workspace |
+| <http://localhost:8000/workspace/urls> | paste a Google results `<div id="search">` block; the result links are stored once each |
 | <http://localhost:8000/> | the DBOS workflow demo (original starter page) |
 
 Stop either window with `Ctrl+C`.
@@ -80,7 +82,8 @@ the work queues up rather than piling onto the GPU.
 **Many employers at once**: set the filters (e.g. **Last scraped before**
 28/09/2026 - never-scraped employers count too unless you untick them), then in
 **Batch scrape** enter how many and press **Scrape N**. It takes the first N
-rows of the list as filtered and sorted. Each employer gets a progress line -
+rows of the list as filtered and sorted. The page sorts by **Oldest added**
+by default, so the employers that have been in the table longest go first. Each employer gets a progress line -
 `fetching page 2/5`, `vacancy 5/23 - translating the description`, or `waiting
 for the GPU` while another employer's vacancy is on it - and the chime plays
 once, when the whole batch is done. **Cancel batch** stops everything, including
@@ -228,6 +231,13 @@ vacancies were stored, only the grading was skipped, and nothing is lost.
 
 Open that employer's row, press **Cancel** in the drawer. It stops the scrape
 *and* the grading it queued. Whatever was already stored stays stored.
+
+### Grading pauses for a few minutes at a time
+
+That is the GPU cooldown: above 80°C the queue waits 3 minutes before the next
+vacancy, and the progress line says so ("GPU at 84°C - cooling down for 3
+min"). Tune it in `.env` with `GPU_MAX_TEMP_C`, `GPU_COOLDOWN_SECONDS` and
+`GPU_MAX_COOLDOWNS` (it carries on after that many pauses regardless).
 
 ### Nothing is happening at all - no GPU, no progress
 

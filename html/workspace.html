@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Raw listings - job-hunt</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      // Same palette as the other pages.
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              ink: { DEFAULT: "#16181d", raised: "#1c1f25", border: "#3a3d44" },
+              fg: { DEFAULT: "#d8d9dc", muted: "#a3a5aa" },
+              splice: "#c8f62e",
+              lily: "#9ab5e5",
+              cyan: "#44e3ee",
+            },
+            fontFamily: { sans: ['"Open Sans"', "system-ui", "sans-serif"] },
+          },
+        },
+      };
+    </script>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/alpinejs/3.14.9/cdn.min.js"></script>
+    <style>
+      [x-cloak] { display: none !important; }
+    </style>
+  </head>
+
+  <body class="bg-ink text-fg font-sans min-h-screen antialiased">
+    <!--TOPBAR-->
+    <div x-data="chooser()" x-init="init()" x-cloak class="max-w-[900px] mx-auto px-4 sm:px-6 py-6">
+      <header class="mb-6">
+        <h1 class="text-2xl sm:text-3xl font-bold tracking-tight">Raw listings</h1>
+        <p class="text-sm text-fg-muted mt-1">What do you want to process?</p>
+      </header>
+
+      <div class="grid gap-4 sm:grid-cols-2">
+        <a href="/workspace/raw/existing"
+           class="block rounded-lg border border-ink-border bg-ink-raised p-5 hover:border-cyan/60 transition">
+          <div class="text-lg font-semibold">Process existing listings</div>
+          <p class="text-sm text-fg-muted mt-1">
+            Go through the collected URLs one by one: the link is filled in, you paste its HTML.
+          </p>
+          <div class="text-sm text-cyan mt-3 tabular-nums" x-show="remaining !== null"
+               x-text="remaining + ' without HTML'"></div>
+        </a>
+        <a href="/workspace/raw/other"
+           class="block rounded-lg border border-ink-border bg-ink-raised p-5 hover:border-splice/60 transition">
+          <div class="text-lg font-semibold">Process other url</div>
+          <p class="text-sm text-fg-muted mt-1">
+            Paste any link and its HTML yourself.
+          </p>
+        </a>
+      </div>
+    </div>
+
+    <script>
+      function chooser() {
+        return {
+          remaining: null,
+          async init() {
+            try {
+              const res = await fetch("/api/workspace/manual-job-listing-urls/next");
+              if (res.ok) this.remaining = (await res.json()).remaining;
+            } catch (e) {
+              // The count is a convenience; the choice works without it.
+            }
+          },
+        };
+      }
+    </script>
+  </body>
+</html>

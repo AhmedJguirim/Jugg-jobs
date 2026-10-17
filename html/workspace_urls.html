@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Listing URLs - job-hunt</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      // Same palette as the other pages.
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              ink: { DEFAULT: "#16181d", raised: "#1c1f25", border: "#3a3d44" },
+              fg: { DEFAULT: "#d8d9dc", muted: "#a3a5aa" },
+              splice: "#c8f62e",
+              lily: "#9ab5e5",
+              cyan: "#44e3ee",
+              danger: "#dc5848",
+              warn: "#e5a82f",
+              ok: "#56a64b",
+            },
+            fontFamily: { sans: ['"Open Sans"', "system-ui", "sans-serif"] },
+          },
+        },
+      };
+    </script>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/alpinejs/3.14.9/cdn.min.js"></script>
+    <style>
+      [x-cloak] { display: none !important; }
+      ::-webkit-scrollbar { width: 10px; height: 10px; }
+      ::-webkit-scrollbar-track { background: #16181d; }
+      ::-webkit-scrollbar-thumb { background: #3a3d44; border-radius: 5px; }
+    </style>
+  </head>
+
+  <body class="bg-ink text-fg font-sans min-h-screen antialiased">
+    <!--TOPBAR-->
+    <div x-data="listingUrls()" x-init="load()" x-cloak class="max-w-[1000px] mx-auto px-4 sm:px-6 py-6">
+      <header class="mb-6">
+        <h1 class="text-2xl sm:text-3xl font-bold tracking-tight">Listing URLs</h1>
+        <p class="text-sm text-fg-muted mt-1">
+          Paste the <code class="text-fg">&lt;div id="search"&gt;</code> block from a Google results page.
+          The result links are extracted and stored; links already stored are skipped.
+        </p>
+      </header>
+
+      <form @submit.prevent="submit()" class="rounded-lg border border-ink-border bg-ink-raised p-4 mb-6 space-y-3">
+        <label for="search-html" class="block text-[11px] uppercase tracking-wider text-fg-muted">Search results HTML</label>
+        <textarea id="search-html" x-model="html" required rows="10" spellcheck="false"
+                  placeholder="Paste the id=&quot;search&quot; div here…"
+                  class="w-full bg-ink border border-ink-border rounded-md px-3 py-2 text-xs font-mono placeholder:text-fg-muted/60 focus:outline-none focus:border-cyan/70"></textarea>
+        <div class="flex flex-wrap items-center gap-3">
+          <button type="submit" :disabled="saving"
+                  class="px-4 py-2 text-sm rounded-md border border-cyan/60 text-cyan hover:bg-cyan/10 transition disabled:opacity-40">
+            <span x-text="saving ? 'Extracting…' : 'Extract links'"></span>
+          </button>
+          <span x-show="notice" class="text-sm text-ok" x-text="notice" role="status"></span>
+          <span x-show="error" class="text-sm text-danger" x-text="error" role="alert"></span>
+        </div>
+      </form>
+
+      <section>
+        <h2 class="text-[11px] uppercase tracking-wider text-fg-muted mb-2">
+          manual_job_listing_urls <span class="tabular-nums" x-text="'(' + total + ')'"></span>
+        </h2>
+        <p x-show="!items.length" class="text-sm text-fg-muted">Nothing stored yet.</p>
+        <div x-show="items.length" class="overflow-x-auto rounded-lg border border-ink-border">
+          <table class="w-full text-sm">
+            <thead class="bg-ink-raised text-[11px] uppercase tracking-wider text-fg-muted text-left">
+              <tr><th class="px-3 py-2">url</th><th class="px-3 py-2 whitespace-nowrap">scraped_at</th></tr>
+            </thead>
+            <tbody>
+              <template x-for="item in items" :key="item.id">
+                <tr class="border-t border-ink-border" :class="item.fresh ? 'bg-ok/10' : ''">
+                  <td class="px-3 py-2 break-all">
+                    <a :href="item.url" target="_blank" rel="noopener noreferrer" class="text-lily hover:underline" x-text="item.url"></a>
+                  </td>
+                  <td class="px-3 py-2 whitespace-nowrap text-fg-muted tabular-nums"
+                      x-text="item.scraped_at ? new Date(item.scraped_at).toLocaleString() : '—'"></td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <script>
+      function listingUrls() {
+        return {
+          html: "",
+          items: [],
+          total: 0,
+          saving: false,
+          notice: "",
+          error: "",
+          async load(freshUrls = new Set()) {
+            try {
+              const res = await fetch("/api/workspace/manual-job-listing-urls?limit=500");
+              if (!res.ok) throw new Error("HTTP " + res.status);
+              const body = await res.json();
+              this.items = body.items.map((i) => ({ ...i, fresh: freshUrls.has(i.url) }));
+              this.total = body.total;
+            } catch (e) {
+              this.error = "Could not load stored URLs: " + e.message;
+            }
+          },
+          async submit() {
+            this.saving = true;
+            this.notice = "";
+            this.error = "";
+            try {
+              const res = await fetch("/api/workspace/manual-job-listing-urls/extract", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ html: this.html }),
+              });
+              if (!res.ok) {
+                const detail = (await res.json().catch(() => ({}))).detail;
+                throw new Error(typeof detail === "string" ? detail : "HTTP " + res.status);
+              }
+              const r = await res.json();
+              this.notice = `Found ${r.found}: ${r.added} added, ${r.skipped} already stored.`;
+              this.html = "";
+              await this.load(new Set(r.urls.filter((u) => u.added).map((u) => u.url)));
+            } catch (e) {
+              this.error = "Not saved: " + e.message;
+            } finally {
+              this.saving = false;
+            }
+          },
+        };
+      }
+    </script>
+  </body>
+</html>

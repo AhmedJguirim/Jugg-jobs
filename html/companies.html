@@ -41,6 +41,7 @@
   </head>
 
   <body class="bg-ink text-fg font-sans min-h-screen antialiased">
+    <!--TOPBAR-->
     <div x-data="companies()" x-init="init()" x-cloak class="max-w-[1400px] mx-auto px-4 sm:px-6 py-6">
       <!-- ── Header ─────────────────────────────────────────────────── -->
       <header class="mb-6 flex flex-wrap items-end justify-between gap-3">
@@ -60,12 +61,6 @@
           >
             <span x-text="soundEnabled ? '♪' : '♪̸'"></span>
           </button>
-          <a href="/board" class="px-3 py-2 text-sm rounded-md border border-ink-border hover:border-splice/60 hover:text-splice transition">
-            Job board
-          </a>
-          <a href="/" class="px-3 py-2 text-sm rounded-md border border-ink-border hover:border-lily/60 hover:text-lily transition">
-            Workflows
-          </a>
         </nav>
       </header>
 
@@ -121,6 +116,8 @@
               <option value="vacancies">Most vacancies</option>
               <option value="fit">Best fit</option>
               <option value="recent">Most recent posting</option>
+              <option value="newest">Newest added</option>
+              <option value="oldest">Oldest added</option>
             </select>
           </div>
           <div>
@@ -441,7 +438,7 @@
           soundEnabled: true,
           audioContext: null,
           filters: {
-            q: "", province: "", has_jobs: false, order_by: "name",
+            q: "", province: "", has_jobs: false, order_by: "oldest",
             scraped_before: "", include_never_scraped: true,
           },
           // One batch at a time: { workflow_id, status, companies, counts }.
@@ -747,7 +744,7 @@
           reset() {
             this.page = 0;
             this.filters = {
-              q: "", province: "", has_jobs: false, order_by: "name",
+              q: "", province: "", has_jobs: false, order_by: "oldest",
               scraped_before: "", include_never_scraped: true,
             };
           },

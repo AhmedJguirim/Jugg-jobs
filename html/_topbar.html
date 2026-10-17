@@ -1,0 +1,57 @@
+<!-- Shared top bar: section switch + that section's navigation.
+     Injected by main.py (render_page); __SECTION__ is "jobs" or "workspace". -->
+<style>
+  .sx-bar { background: #16181d; border-bottom: 1px solid #3a3d44; font-family: "Open Sans", system-ui, sans-serif; }
+  .sx-inner { max-width: 1400px; margin: 0 auto; padding: 10px 24px; display: flex; flex-wrap: wrap; align-items: center; gap: 12px 28px; }
+  .sx-switch { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; color: #a3a5aa; font-size: 13px; font-weight: 600; user-select: none; }
+  .sx-switch .sx-label { transition: color .15s; }
+  .sx-track { position: relative; width: 44px; height: 24px; border-radius: 12px; background: #1c1f25; border: 1px solid #3a3d44; transition: border-color .15s; }
+  .sx-knob { position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #c8f62e; transition: transform .18s ease, background .18s; }
+  .sx-switch[data-section="workspace"] .sx-knob { transform: translateX(20px); background: #44e3ee; }
+  .sx-switch[data-section="jobs"] .sx-label-jobs { color: #c8f62e; }
+  .sx-switch[data-section="workspace"] .sx-label-workspace { color: #44e3ee; }
+  .sx-switch:hover .sx-track, .sx-switch:focus-visible .sx-track { border-color: #a3a5aa; }
+  .sx-nav { display: flex; flex-wrap: wrap; gap: 6px; }
+  .sx-nav a { padding: 6px 12px; border-radius: 6px; border: 1px solid transparent; color: #a3a5aa; font-size: 13px; text-decoration: none; }
+  .sx-nav a:hover { color: #d8d9dc; border-color: #3a3d44; }
+  .sx-nav a[aria-current="page"] { color: #d8d9dc; border-color: #3a3d44; background: #1c1f25; }
+</style>
+<div class="sx-bar" id="sx-bar" data-section="__SECTION__">
+  <div class="sx-inner">
+    <a class="sx-switch" id="sx-switch" data-section="__SECTION__" role="switch"
+       aria-label="Switch section: Jobs or Workspace" href="#">
+      <span class="sx-label sx-label-jobs">Jobs</span>
+      <span class="sx-track"><span class="sx-knob"></span></span>
+      <span class="sx-label sx-label-workspace">Workspace</span>
+    </a>
+    <nav class="sx-nav" id="sx-nav" aria-label="Section navigation"></nav>
+  </div>
+</div>
+<script>
+  (function () {
+    var section = "__SECTION__";
+    var sections = {
+      jobs: [["/board", "Job board"], ["/companies", "Employers"], ["/", "Workflows"]],
+      workspace: [["/workspace", "Raw listings"], ["/workspace/urls", "Listing URLs"]],
+    };
+    var home = { jobs: "/board", workspace: "/workspace" };
+    var other = section === "jobs" ? "workspace" : "jobs";
+
+    var toggle = document.getElementById("sx-switch");
+    toggle.setAttribute("href", home[other]);
+    toggle.setAttribute("aria-checked", section === "workspace" ? "true" : "false");
+    toggle.title = "Go to " + other;
+
+    var nav = document.getElementById("sx-nav");
+    sections[section].forEach(function (entry) {
+      var link = document.createElement("a");
+      link.href = entry[0];
+      link.textContent = entry[1];
+      // The raw-listing forms live under /workspace/raw/ and belong to "Raw listings".
+      var here = location.pathname === entry[0] ||
+        (entry[0] === "/workspace" && location.pathname.indexOf("/workspace/raw/") === 0);
+      if (here) link.setAttribute("aria-current", "page");
+      nav.appendChild(link);
+    });
+  })();
+</script>

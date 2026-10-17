@@ -60,6 +60,9 @@ Supporting trees, outside the runtime path:
 | `app/api/companies.py` | HTTP API behind the employers browser: listing, detail, single and batch scrapes |
 | `html/board.html` | The job board: Tailwind + Alpine, served at `/board` |
 | `html/companies.html` | The employers browser, served at `/companies` |
+| `app/api/workspace.py` | HTTP API behind the workspace section: submit and list raw job listings (ADR-0012) |
+| `html/workspace.html` | Raw listings form and list, served at `/workspace` |
+| `html/_topbar.html` | Section switch (Jobs / Workspace) and per-section nav, injected into every page by `main.py:render_page` |
 | `app/workflows/` | DBOS workflows/steps; registers the `llm` and `job-ingest` queues |
 | `app/llm/` | Versioned prompts, candidate profiles, translation and grading |
 | `profiles/*.json` | Tiered candidate profiles; `LLM_DEFAULT_PROFILE` picks one |
@@ -153,6 +156,18 @@ So a Python role requiring fluent Dutch scores 85 *and* `blocked=true` - "a grea
 job you cannot take", which is different and more useful than a low score. The
 shortlist hides blocked rows by default. See ADR-0007.
 
+### Workspace: `raw_job_listings`
+
+Listings pasted in by hand (ADR-0012): `id`, `url` (text), `html_body` (text,
+stored exactly as pasted) and `created_at`/`updated_at`. Not yet linked to
+`jobs` or processed in any way.
+
+### Workspace: `manual_job_listing_urls`
+
+Result links extracted from a pasted Google `<div id="search">` block (ADR-0013):
+`url` (unique), `scraped_at` (null until scraped) and timestamps. Parsed by
+`app/text/search_results.py`; `/workspace/urls` is the page.
+
 ## The view
 
 `/board` renders what the flows produced: every vacancy with its English title
@@ -176,7 +191,8 @@ Three endpoints back it:
 `/companies` browses all 3017 employers. Unlike the board it paginates
 **server-side**: 3000+ rows is past the point where shipping the table to the
 browser is reasonable, so `/api/companies` takes `q`, `province`, `has_jobs`,
-`scraped_before` (+ `include_never_scraped`), `order_by`, `limit` and `offset`, and `/api/companies/{id}` returns one employer
+`scraped_before` (+ `include_never_scraped`), `order_by` (`name`, `vacancies`,
+`fit`, `recent`, `newest`/`oldest` by creation date), `limit` and `offset`, and `/api/companies/{id}` returns one employer
 with its vacancies.
 
 The employer list has two distinct origins, which the UI labels:
@@ -336,6 +352,13 @@ concurrency 1.
 
 Page fetching is network-bound and runs on a separate `job-ingest` queue with
 `worker_concurrency=3`, so scraping is parallel while inference stays serial.
+**The queue pauses when the GPU runs hot.** Before each vacancy's first model
+call, `enrich_job_workflow` reads the temperature with `nvidia-smi`; above
+`GPU_MAX_TEMP_C` (80°C) it `DBOS.sleep`s for `GPU_COOLDOWN_SECONDS` (3 min),
+re-checks, and gives up after `GPU_MAX_COOLDOWNS` (5) pauses. It holds the one
+`llm` slot while it waits, so nothing else touches the card. An unreadable
+sensor never pauses anything. See ADR-0011.
+
 Batch company scrapes run on their own `company-scrape` queue
 (`worker_concurrency=2`), so employers waiting on the GPU never hold the
 page-fetch slots.

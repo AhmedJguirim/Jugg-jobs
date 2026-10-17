@@ -19,3 +19,6 @@ Consequences (what this costs us, including what it rules out).
 | [0008](0008-cv-derived-grading-strategy.md) | CV-derived grading strategy with tiered skills | Accepted |
 | [0009](0009-applied-and-archived-marks.md) | Applied and archived marks on vacancies | Accepted |
 | [0010](0010-batch-company-scrape.md) | Batch company scrape with per-employer progress | Accepted |
+| [0011](0011-gpu-cooldown.md) | Pause the GPU queue when the card runs hot | Accepted |
+| [0012](0012-workspace-section.md) | A second section: the workspace | Accepted |
+| [0013](0013-manual-job-listing-urls.md) | Manual job listing URLs from Google results | Accepted |

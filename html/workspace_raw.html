@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Process listings - job-hunt</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      // Same palette as html/app.html and html/board.html.
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              ink: { DEFAULT: "#16181d", raised: "#1c1f25", border: "#3a3d44" },
+              fg: { DEFAULT: "#d8d9dc", muted: "#a3a5aa" },
+              splice: "#c8f62e",
+              lily: "#9ab5e5",
+              cyan: "#44e3ee",
+              danger: "#dc5848",
+              warn: "#e5a82f",
+              ok: "#56a64b",
+            },
+            fontFamily: { sans: ['"Open Sans"', "system-ui", "sans-serif"] },
+          },
+        },
+      };
+    </script>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/alpinejs/3.14.9/cdn.min.js"></script>
+    <style>
+      [x-cloak] { display: none !important; }
+      ::-webkit-scrollbar { width: 10px; height: 10px; }
+      ::-webkit-scrollbar-track { background: #16181d; }
+      ::-webkit-scrollbar-thumb { background: #3a3d44; border-radius: 5px; }
+    </style>
+  </head>
+
+  <body class="bg-ink text-fg font-sans min-h-screen antialiased">
+    <!--TOPBAR-->
+    <div x-data="rawListings()" x-init="init()" x-cloak class="max-w-[900px] mx-auto px-4 sm:px-6 py-6">
+      <header class="mb-6">
+        <a href="/workspace" class="text-xs text-fg-muted hover:text-fg">← Raw listings</a>
+        <h1 class="text-2xl sm:text-3xl font-bold tracking-tight" x-text="existing ? 'Process existing listings' : 'Process other url'"></h1>
+        <p class="text-sm text-fg-muted mt-1" x-show="!existing">
+          Paste a vacancy's link and the full HTML of its page. It is stored untouched.
+        </p>
+        <p class="text-sm text-fg-muted mt-1" x-show="existing">
+          The link comes from your collected URLs. Paste the page's HTML and save: the next link
+          that has no stored HTML yet appears.
+          <span class="text-fg" x-show="!done" x-text="remaining + ' left'"></span>
+        </p>
+      </header>
+
+      <div x-show="existing &amp;&amp; done" class="rounded-lg border border-ok/50 bg-ok/10 px-4 py-3 text-sm mb-6">
+        Every collected URL has its HTML stored. Add more on
+        <a href="/workspace/urls" class="underline">Listing URLs</a>.
+      </div>
+
+      <form x-show="!(existing &amp;&amp; done)" @submit.prevent="submit()" class="rounded-lg border border-ink-border bg-ink-raised p-4 mb-6 space-y-4">
+        <div>
+          <label for="listing-url" class="block text-[11px] uppercase tracking-wider text-fg-muted mb-1">Link</label>
+          <input id="listing-url" x-model="form.url" type="url" required placeholder="https://…"
+                 class="w-full bg-ink border border-ink-border rounded-md px-3 py-2 text-sm placeholder:text-fg-muted/60 focus:outline-none focus:border-cyan/70" />
+        </div>
+        <div>
+          <label for="listing-body" class="block text-[11px] uppercase tracking-wider text-fg-muted mb-1">HTML body</label>
+          <textarea id="listing-body" x-model="form.html_body" required rows="12" spellcheck="false"
+                    placeholder="Paste the page's HTML here…"
+                    class="w-full bg-ink border border-ink-border rounded-md px-3 py-2 text-xs font-mono placeholder:text-fg-muted/60 focus:outline-none focus:border-cyan/70"></textarea>
+          <div class="text-[11px] text-fg-muted mt-1 tabular-nums" x-text="form.html_body.length.toLocaleString() + ' characters'"></div>
+        </div>
+        <div class="flex items-center gap-3">
+          <button type="submit" :disabled="saving"
+                  class="px-4 py-2 text-sm rounded-md border border-cyan/60 text-cyan hover:bg-cyan/10 transition disabled:opacity-40">
+            <span x-text="saving ? 'Saving…' : 'Save listing'"></span>
+          </button>
+          <button type="button" x-show="existing" @click="skip()" :disabled="saving"
+                  class="px-4 py-2 text-sm rounded-md border border-ink-border text-fg-muted hover:text-fg transition disabled:opacity-40">
+            Skip this link
+          </button>
+          <span x-show="notice" class="text-sm text-ok" x-text="notice" role="status"></span>
+          <span x-show="error" class="text-sm text-danger" x-text="error" role="alert"></span>
+        </div>
+      </form>
+
+      <section>
+        <h2 class="text-[11px] uppercase tracking-wider text-fg-muted mb-2">
+          Stored <span class="tabular-nums" x-text="'(' + total + ')'"></span>
+        </h2>
+        <p x-show="!items.length" class="text-sm text-fg-muted">Nothing submitted yet.</p>
+        <ul class="space-y-2">
+          <template x-for="item in items" :key="item.id">
+            <li class="rounded-lg border border-ink-border bg-ink-raised px-4 py-2 text-sm flex flex-wrap items-baseline justify-between gap-x-4">
+              <a :href="item.url" target="_blank" rel="noopener noreferrer"
+                 class="text-lily hover:underline break-all" x-text="item.url"></a>
+              <span class="text-xs text-fg-muted tabular-nums"
+                    x-text="'#' + item.id + ' · ' + new Date(item.created_at).toLocaleString()"></span>
+            </li>
+          </template>
+        </ul>
+      </section>
+    </div>
+
+    <script>
+      function rawListings() {
+        return {
+          form: { url: "", html_body: "" },
+          items: [],
+          total: 0,
+          saving: false,
+          notice: "",
+          error: "",
+          existing: location.pathname.endsWith("/existing"),
+          skipped: 0, // links passed over this visit; they come back on reload
+          remaining: 0,
+          done: false,
+          async init() {
+            await this.load();
+            if (this.existing) await this.nextUrl();
+          },
+          async nextUrl() {
+            try {
+              const res = await fetch("/api/workspace/manual-job-listing-urls/next?skip=" + this.skipped);
+              if (!res.ok) throw new Error("HTTP " + res.status);
+              const body = await res.json();
+              this.remaining = body.remaining;
+              if (body.url === null && body.remaining > 0 && this.skipped > 0) {
+                this.skipped = 0; // skipped past the last link: start over
+                return this.nextUrl();
+              }
+              this.done = body.url === null;
+              this.form.url = body.url || "";
+            } catch (e) {
+              this.error = "Could not fetch the next link: " + e.message;
+            }
+          },
+          skip() {
+            this.skipped += 1;
+            this.nextUrl();
+          },
+          async load() {
+            try {
+              const res = await fetch("/api/workspace/raw-job-listings?limit=50");
+              if (!res.ok) throw new Error("HTTP " + res.status);
+              const body = await res.json();
+              this.items = body.items;
+              this.total = body.total;
+            } catch (e) {
+              this.error = "Could not load stored listings: " + e.message;
+            }
+          },
+          async submit() {
+            this.saving = true;
+            this.notice = "";
+            this.error = "";
+            try {
+              const res = await fetch("/api/workspace/raw-job-listings", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(this.form),
+              });
+              if (!res.ok) {
+                const detail = (await res.json().catch(() => ({}))).detail;
+                throw new Error(typeof detail === "string" ? detail : "HTTP " + res.status);
+              }
+              const saved = await res.json();
+              this.notice = "Saved as #" + saved.id + ".";
+              this.form = { url: "", html_body: "" };
+              await this.load();
+              // The saved link drops out of the "next" list, so the offset
+              // for skipped links stays valid.
+              if (this.existing) await this.nextUrl();
+            } catch (e) {
+              this.error = "Not saved: " + e.message;
+            } finally {
+              this.saving = false;
+            }
+          },
+        };
+      }
+    </script>
+  </body>
+</html>
