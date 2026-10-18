@@ -4,6 +4,8 @@
 - `parse_compensation`: a pay range out of a sentence.
 - `read_pay`: the pay range of a whole description, from the sentence that states it.
 - `place_from_text`: a `LocationBase` from a postal "City, Region, Country" string.
+- `company_from_slug` / `title_from_slug`: a name or title the URL only gives as a
+  slug, recovered with its real spelling from the page text where it appears.
 """
 
 from __future__ import annotations
@@ -184,3 +186,67 @@ def place_from_text(text: str) -> Optional[LocationBase]:
             return LocationBase(city=parts[0], province=parts[1])
         return LocationBase(city=parts[0], country_name=parts[1])
     return None
+
+
+# ---- names and titles that a URL gives only as a slug ----------------------------
+
+# A run of words starting with a capital or a digit ("Insider One", "20four7VA").
+_CAPITALISED_RUN = re.compile(r"[A-Z0-9][\w&'-]*(?: [A-Z0-9][\w&'-]*)*")
+_ACRONYMS = {
+    "ai": "AI", "qa": "QA", "ui": "UI", "ux": "UX", "api": "API", "sql": "SQL", "aws": "AWS",
+    "it": "IT", "hr": "HR", "ml": "ML", "sre": "SRE", "cto": "CTO", "vp": "VP", "erp": "ERP",
+    "crm": "CRM", "gcp": "GCP", "llm": "LLM", "php": "PHP", "sdet": "SDET", "devops": "DevOps",
+    "usa": "USA", "uk": "UK", "us": "US", "llc": "LLC", "ltd": "Ltd", "inc": "Inc",
+}
+_EDGE_PUNCTUATION = " \t\n.,;:!?()[]{}\"'*"
+
+
+def _squash(text: str) -> str:
+    """Lower-case letters and digits only: how a slug and its spelling compare equal."""
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
+def slug_words(slug: str) -> str:
+    """`"senior-frontend-developer"` -> `"Senior Frontend Developer"` (known acronyms kept upper-case)."""
+    words = [w for w in re.split(r"[-_\s]+", slug) if w]
+    return " ".join(_ACRONYMS.get(w.lower(), w.capitalize()) for w in words)
+
+
+def company_from_slug(slug: str, text: str) -> tuple[str, str]:
+    """(name, source): the company's own spelling of its URL slug, found in `text`.
+
+    "insiderone" -> "Insider One" when the text says "Insider One", and "20four7va"
+    -> "20four7VA". Otherwise the slug, capitalised ("jobgether" -> "Jobgether").
+    `source` is "text" or "slug" so callers can record how sure the name is.
+    """
+    wanted = _squash(slug)
+    for run in _CAPITALISED_RUN.finditer(text or ""):
+        words = run.group().split()
+        for start in range(len(words)):
+            for end in range(start + 1, min(len(words), start + 4) + 1):
+                candidate = " ".join(words[start:end])
+                if _squash(candidate) == wanted:
+                    return candidate, "text"
+    return slug_words(slug), "slug"
+
+
+def title_from_slug(slug: str, text: str) -> tuple[str, str]:
+    """(title, source): the job title from its URL slug, spelt as the text spells it.
+
+    The slug has lost punctuation and case ("senior-full-stack-engineer-tech-lead");
+    when the same words appear consecutively in `text` ("Senior Full-Stack Engineer
+    - Tech Lead") that spelling is used. Otherwise the slug, capitalised.
+    """
+    target = _squash(slug)
+    words = (text or "").split()
+    if target:
+        for start in range(len(words)):
+            joined = ""
+            for end in range(start, min(len(words), start + 24)):
+                joined += _squash(words[end])
+                if joined == target:
+                    found = " ".join(words[start : end + 1]).strip(_EDGE_PUNCTUATION)
+                    return found, "text"
+                if len(joined) > len(target):
+                    break
+    return slug_words(slug), "slug"

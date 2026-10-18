@@ -30,3 +30,4 @@ Consequences (what this costs us, including what it rules out).
 | [0019](0019-greenhouse-parser.md) | A Greenhouse parser, validated before it is hooked in | Accepted |
 | [0020](0020-lever-parser.md) | A Lever parser, validated before it is hooked in | Accepted |
 | [0021](0021-workable-parser.md) | A Workable parser, validated before it is hooked in | Accepted |
+| [0022](0022-breezy-parser.md) | A Breezy parser built on URL-derived title and company | Accepted |

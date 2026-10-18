@@ -34,7 +34,7 @@ from typing import Optional
 from urllib.parse import unquote, urlsplit
 
 from app.parsers import ListingNotFound, ListingParseError, ParsedListing, ParseResult
-from app.parsers.common import description_html, place_from_text, read_pay
+from app.parsers.common import company_from_slug, description_html, place_from_text, read_pay
 from app.schemas.job import JobCreate
 from app.text.dom import Node, parse_html
 
@@ -62,7 +62,6 @@ _CATEGORIES = (
     ("commitment", "Employment Type"),
     ("workplaceTypes", "Location Type"),
 )
-_CAPITALISED_RUN = re.compile(r"[A-Z][\w&'-]*(?: [A-Z][\w&'-]*)*")
 
 
 def parse(url: str, html: str) -> ParseResult:
@@ -178,17 +177,6 @@ def _apply_url(root: Node) -> Optional[str]:
 
 
 def _company_name(slug: str, text: str) -> str:
-    """The company's own spelling of its URL slug, found in the page text.
-
-    "insiderone" -> "Insider One" when the page says "Insider One"; otherwise the
-    slug capitalised ("jobgether" -> "Jobgether").
-    """
-    wanted = re.sub(r"[^a-z0-9]", "", slug.lower())
-    for run in _CAPITALISED_RUN.finditer(text):
-        words = run.group().split()
-        for start in range(len(words)):
-            for end in range(start + 1, min(len(words), start + 4) + 1):
-                candidate = " ".join(words[start:end])
-                if re.sub(r"[^a-z0-9]", "", candidate.lower()) == wanted:
-                    return candidate
-    return slug.replace("-", " ").replace("_", " ").strip().title()
+    """The company's own spelling of its URL slug, found in the page text (see
+    `common.company_from_slug`): "insiderone" -> "Insider One"; else the slug."""
+    return company_from_slug(slug, text)[0]
