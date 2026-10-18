@@ -56,6 +56,13 @@ class Node:
     def find(self, tag: Optional[str] = None, cls: Optional[str] = None) -> Optional["Node"]:
         return next(iter(self.find_all(tag, cls)), None)
 
+    def find_all_by_attr(self, name: str, value: str) -> list["Node"]:
+        """Elements whose attribute `name` equals `value` (e.g. `data-ui="job-title"`)."""
+        return [node for node in self.iter() if node.attrs.get(name) == value]
+
+    def find_by_attr(self, name: str, value: str) -> Optional["Node"]:
+        return next(iter(self.find_all_by_attr(name, value)), None)
+
     def find_class_prefix(self, prefix: str, tag: Optional[str] = None) -> list["Node"]:
         """Elements with a class starting `prefix` (for hashed CSS-module names)."""
         return [
@@ -85,6 +92,35 @@ class Node:
 
         walk(self)
         return " ".join("".join(parts).split())
+
+    def lines(self) -> list[str]:
+        """The readable text, one string per block element (paragraph, list item,
+        heading...), so callers can tell where one statement ends and the next
+        begins even when the page has no full stops (bullet lists)."""
+        out: list[str] = []
+        buffer: list[str] = []
+
+        def flush() -> None:
+            line = " ".join("".join(buffer).split())
+            if line:
+                out.append(line)
+            buffer.clear()
+
+        def walk(node: "Node") -> None:
+            for child in node.children:
+                if isinstance(child, str):
+                    buffer.append(child)
+                elif child.tag not in _SKIP_TEXT:
+                    block = child.tag in _BLOCKS
+                    if block:
+                        flush()
+                    walk(child)
+                    if block:
+                        flush()
+
+        walk(self)
+        flush()
+        return out
 
     def inner_html(
         self,

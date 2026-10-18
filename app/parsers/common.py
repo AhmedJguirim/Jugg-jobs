@@ -91,18 +91,34 @@ _CURRENCY_CODE = re.compile(r"\b(USD|CAD|EUR|GBP|AUD|NZD|CHF|PLN|SEK|NOK|DKK|INR
 # say so ("CAD $ 164,490").
 _CURRENCY_SYMBOLS = (("zł", "PLN"), ("€", "EUR"), ("£", "GBP"), ("$", "USD"))
 _MAX_SENTENCE = 300
-_SENTENCE_BREAK = re.compile(r"(?<=[.!?])\s+")
+_SENTENCE_BREAK = re.compile(r"(?<=[.!?])\s+|\n+")
 
+
+
+# A line that is just an amount: a currency marker, or a thousands-formatted number.
+_AMOUNT_LINE = re.compile(r"[$\u20ac\u00a3]|z\u0142|\b(?:USD|CAD|EUR|GBP|AUD|NZD|CHF|PLN|SEK|NOK|DKK|INR|SGD|JPY|BRL|MXN)\b|\d{1,3}(?:[.,]\d{3})")
 
 
 def _pay_sentences(text: str) -> list[str]:
-    """Sentences of a description that state pay, in order."""
+    """Sentences (or lines) of a description that state pay, in order.
+
+    A pay *label* with no figure of its own ("Base Pay Grade") borrows the next
+    line when that line is an amount ("259,000 zl - 379,000 zl"): pages lay such
+    ranges out as a heading and a value in separate blocks.
+    """
+    pieces = [p for p in _SENTENCE_BREAK.split(text or "") if p.strip()]
     found = []
-    for sentence in _SENTENCE_BREAK.split(text or ""):
+    for index, sentence in enumerate(pieces):
         lowered = sentence.lower()
-        if any(w in lowered for w in _PAY_WORDS) and not any(w in lowered for w in _NOT_PAY_WORDS):
-            if re.search(r"\d", sentence):
-                found.append(sentence.strip())
+        if not any(w in lowered for w in _PAY_WORDS) or any(w in lowered for w in _NOT_PAY_WORDS):
+            continue
+        candidate = sentence
+        if not re.search(r"\d", sentence) and index + 1 < len(pieces):
+            following = pieces[index + 1]
+            if _AMOUNT_LINE.search(following) and not any(w in following.lower() for w in _NOT_PAY_WORDS):
+                candidate = f"{sentence} {following}"
+        if re.search(r"\d", candidate):
+            found.append(candidate.strip())
     return found
 
 
@@ -120,6 +136,9 @@ def _currency(sentence: str) -> tuple[Optional[str], Optional[str]]:
 def read_pay(text: str) -> tuple[Optional[int], Optional[int], Optional[str], Optional[dict]]:
     """(min, max, type, details) from the first sentence of `text` that states pay.
 
+    `text` should have one statement per line (`Node.lines()`), so a bullet list
+    without full stops is not read as one long sentence.
+
     Only a sentence about pay counts, never one about equity, a bonus or a
     stipend, so a "$500M Series E" or "New hire equity: $24,000" is not a salary.
     `details` is what to keep in `raw`: the sentence and its currency (the salary
@@ -129,6 +148,10 @@ def read_pay(text: str) -> tuple[Optional[int], Optional[int], Optional[str], Op
         low, high, period = parse_compensation(sentence)
         if low is not None:
             currency, source = _currency(sentence)
+            # A bare small number ("5+ years", "28 days") is not pay: unless a
+            # currency is named, the amount must be a real-looking figure.
+            if currency is None and high < 1000:
+                continue
             details = {"text": sentence[:_MAX_SENTENCE], "currency": currency, "currency_source": source}
             return low, high, period, details
     return None, None, None, None

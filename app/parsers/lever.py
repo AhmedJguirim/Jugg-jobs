@@ -81,8 +81,9 @@ def parse(url: str, html: str) -> ParseResult:
     blocks = _description_blocks(root)
     description = "\n".join(h for h in (description_html(b) for b in blocks) if h) or None
     text = " ".join(b.text() for b in blocks)
+    pay_text = "\n".join(line for b in blocks for line in b.lines())
 
-    salary_min, salary_max, salary_type, compensation = read_pay(text)
+    salary_min, salary_max, salary_type, compensation = read_pay(pay_text)
 
     title = title_node.text()
     detail_url = f"{base}/{company_slug}/{job_id}"

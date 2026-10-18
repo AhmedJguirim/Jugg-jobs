@@ -69,7 +69,7 @@ def parse(url: str, html: str) -> ParseResult:
     description_node = root.find(cls="job__description")
     location_text = _text_of(root.find(cls="job__location"))
     company = _company(root)
-    salary_min, salary_max, salary_type, compensation = read_pay(_text_of(description_node))
+    salary_min, salary_max, salary_type, compensation = read_pay("\n".join(description_node.lines()) if description_node is not None else "")
 
     title = title_node.text()
     detail_url = f"{base}/{board}/jobs/{job_id}"
