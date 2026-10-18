@@ -97,7 +97,7 @@ class TestNothingToStore:
         assert count(session, JobTest) == before
 
     def test_unsupported_site(self, session):
-        raw_id = add_raw(session, "https://apply.workable.com/acme/j/1", "<h1>Engineer</h1>")
+        raw_id = add_raw(session, "https://careers.smartrecruiters.com/acme/1", "<h1>Engineer</h1>")
 
         assert processing.process(session, raw_id)["status"] == processing.UNSUPPORTED
 

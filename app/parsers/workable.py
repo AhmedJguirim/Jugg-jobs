@@ -25,8 +25,8 @@ which says "This job is no longer available", and a copy of that page is a ~400 
 list of other jobs. Either signal gives `ListingNotFound`. A careers page without
 that message is not a removal, it is the wrong page, and is reported as unreadable.
 
-Not hooked to the real flow yet: it is not in `PLATFORM_HOSTS` / `_registry` in
-`app/parsers/__init__.py`, so no listing is parsed with it until it is.
+Registered in `PLATFORM_HOSTS` / `_registry` (`app/parsers/__init__.py`), so a
+listing on one of `HOSTS` is graded and turned into a job like an Ashby one.
 """
 
 from __future__ import annotations
@@ -42,7 +42,7 @@ from app.text.dom import Node, parse_html
 
 PLATFORM = "workable"
 
-# Hosts a Workable job page is served from; keep in step with `PLATFORM_HOSTS` when hooked.
+# Hosts a Workable job page is served from; keep in step with `PLATFORM_HOSTS`.
 HOSTS = ("apply.workable.com",)
 
 # `/<company>/j/<id>` or `/j/<id>`; ids are ten hex characters.

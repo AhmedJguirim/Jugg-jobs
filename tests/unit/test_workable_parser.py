@@ -262,13 +262,30 @@ class TestUrl:
             parse(URL, html)
 
 
-class TestNotHookedYet:
-    """Workable is not in the platform registry, so no listing reaches this parser
-    through the real flow. When it is hooked, replace this class with detection tests."""
+class TestRegistered:
+    @pytest.mark.parametrize("url", [
+        DACODES,
+        PEARL,
+        "https://apply.workable.com/supportyourapp/?not_found=true",   # a redirect with no job id
+        " https://APPLY.WORKABLE.COM/acme/j/ABCDEF1234/apply/ ",
+    ])
+    def test_workable_urls_are_detected(self, url):
+        assert detect_platform(url) == "workable"
 
-    def test_the_platform_is_not_detected(self):
-        assert detect_platform(DACODES) is None
+    @pytest.mark.parametrize("url", [
+        "https://workable.com/acme/j/ABCDEF1234",               # the marketing site, not the job board
+        "https://example.com/apply.workable.com/acme",          # host only, not path
+        "https://notapply.workable.org/acme/j/ABCDEF1234",
+    ])
+    def test_lookalikes_are_not(self, url):
+        assert detect_platform(url) is None
 
-    def test_the_registry_has_no_workable_parser(self):
-        with pytest.raises(ListingParseError):
-            parse_listing("workable", DACODES, page(DACODES))
+    def test_the_dispatch_reaches_the_parser(self):
+        result = parse_listing("workable", DACODES, page(DACODES))
+
+        assert isinstance(result, ParsedListing) and result.job.company_name == "DaCodes"
+
+    def test_the_other_platforms_are_still_detected(self):
+        assert detect_platform("https://jobs.ashbyhq.com/acme/ac527b20-e9fc-41d1-841c-bc881e2abef6") == "ashbyhq"
+        assert detect_platform("https://job-boards.greenhouse.io/2k/jobs/8035080003") == "greenhouse"
+        assert detect_platform("https://jobs.lever.co/acme/ac527b20-e9fc-41d1-841c-bc881e2abef6") == "lever"

@@ -270,3 +270,48 @@ class TestLeverListings:
             session, profile_name="t", prompt_version="assess-v4", limit=100_000)}
 
         assert job_id not in pending
+
+
+class TestWorkableListings:
+    URL = "https://apply.workable.com/dacodes-mx/j/5E3ED2DFA7"
+    GONE = "https://apply.workable.com/supportyourapp/j/1C3E8E25DA"
+
+    def fixture(self, name):
+        return (FIXTURES.parent / "workable" / name).read_text(encoding="utf-8")
+
+    @pytest.fixture
+    def wk_payload(self):
+        parsed = parse_listing("workable", self.URL, self.fixture("dacodes_machine_learning_engineer.html"))
+        assert isinstance(parsed, ParsedListing)
+        return parsed.job.model_dump(mode="json")
+
+    def test_it_is_graded_with_the_pages_facts_and_then_created(self, session, wk_payload, monkeypatch):
+        stub_model(monkeypatch, '{"fit_score": 60, "verdict": "possible", "remote": "remote", "summary": "A role."}')
+        prepared = grading.prepare(wk_payload, "t", session)
+
+        assert prepared["company"] == "DaCodes"
+        assert prepared["facts"]["Location Type"] == "Remote" and "Argentina" in prepared["facts"]["Location"]
+        assert "Salary" not in prepared["facts"]  # the page states none
+        result = grading.persist(session, wk_payload, prepared, grading.grade(prepared))
+
+        job = session.get(Job, result["job_id"])
+        assert (job.source, job.external_id, job.company.name) == ("workable", "5E3ED2DFA7", "DaCodes")
+
+    def test_the_dutch_pipeline_leaves_it_alone(self, session, wk_payload, monkeypatch):
+        stub_model(monkeypatch, '{"fit_score": 60, "verdict": "possible"}')
+        prepared = grading.prepare(wk_payload, "t", session)
+        job_id = grading.persist(session, wk_payload, prepared, grading.grade(prepared))["job_id"]
+
+        pending = {j.id for j in enrichment_repo.pending_assessment(
+            session, profile_name="t", prompt_version="assess-v4", limit=100_000)}
+
+        assert job_id not in pending
+
+    def test_the_careers_page_saved_under_a_job_url_is_reported_not_found(self):
+        from app.services import listing_processing
+
+        result = listing_processing.parse({
+            "id": 235, "url": self.GONE, "html": self.fixture("supportyourapp_careers_page_job_gone.html")})
+
+        assert result["status"] == listing_processing.NOT_FOUND and result["platform"] == "workable"
+        assert "no longer available" in result["reason"]

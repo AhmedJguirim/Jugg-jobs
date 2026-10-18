@@ -64,7 +64,7 @@ Supporting trees, outside the runtime path:
 | `app/llm/global_grader.py` | Grader for vacancies from any country: the model reports restrictions with quotes, code checks them against the profile (ADR-0015); `global_prompts.py`, `geo.py` support it |
 | `app/services/listing_grading.py`, `app/workflows/listing_grading.py` | Grade a parsed listing on the `llm` queue, then create the job, its text and its grade together |
 | `app/services/listing_progress.py` | One readable line per listing grading run, and a batch's counts |
-| `app/parsers/` | Listing parsers: platform from the URL, one pure parser per platform returning `JobCreate` (ADR-0014). `common.py` holds what they share; `greenhouse.py` joined `ashbyhq.py` in the registry (ADR-0019); `lever.py` joined them (ADR-0020); `workable.py` is written and checked in `jobs_test` but not yet hooked in (ADR-0021) |
+| `app/parsers/` | Listing parsers: platform from the URL, one pure parser per platform returning `JobCreate` (ADR-0014). `common.py` holds what they share; `greenhouse.py` joined `ashbyhq.py` in the registry (ADR-0019); `lever.py` joined them (ADR-0020); `workable.py` joined them (ADR-0021) |
 | `app/text/dom.py` | Small stdlib HTML tree used by the parsers |
 | `app/workflows/listing_processing.py` | `process_raw_listing_workflow`: raw listing -> parse -> `jobs_test` |
 | `app/api/jobs_test.py` | Read-only API behind `/jobs-test`: list, and one record with its description |

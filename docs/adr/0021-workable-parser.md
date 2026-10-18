@@ -78,3 +78,11 @@ and skills" has no figure), and neither is given one. The careers page gives
 - Hex job ids keep the case they were saved with (`5E3ED2DFA7`); a URL with a
   different case would be a different `external_id`.
 - Parsing creates `companies` rows in the shared tables, as for the other parsers.
+
+## Update: hooked in (2026-10-18)
+
+After the pages checked out, `apply.workable.com` was added to `PLATFORM_HOSTS` and the
+parser to `_registry`. The three raw listings saved as `unsupported` were set back to
+waiting, the careers-page one included: grading it reports `not_found` and marks it so,
+which is the right ending for it. A Workable URL saved from now on waits to be graded
+like the others.
