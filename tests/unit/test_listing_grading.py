@@ -236,3 +236,37 @@ class TestGreenhouseListings:
             session, profile_name="t", prompt_version="assess-v4", limit=100_000)}
 
         assert job_id not in pending
+
+
+class TestLeverListings:
+    URL = "https://jobs.lever.co/jobgether/29ff8655-9468-4c31-8804-93b79abeb2a8"
+
+    @pytest.fixture
+    def lv_payload(self):
+        html = (FIXTURES.parent / "lever" / "jobgether_full_stack_microsoft_developer.html").read_text(encoding="utf-8")
+        parsed = parse_listing("lever", self.URL, html)
+        assert isinstance(parsed, ParsedListing)
+        return parsed.job.model_dump(mode="json")
+
+    def test_it_is_graded_with_the_pages_facts_and_then_created(self, session, lv_payload, monkeypatch):
+        stub_model(monkeypatch, '{"fit_score": 70, "verdict": "possible", "remote": "remote", "summary": "A role."}')
+        prepared = grading.prepare(lv_payload, "t", session)
+
+        assert prepared["company"] == "Jobgether"
+        assert prepared["facts"]["Location"] == "US" and prepared["facts"]["Location Type"] == "Remote"
+        assert prepared["facts"]["Salary"] == "100000-130000 USD (yearly)"  # with its currency
+        result = grading.persist(session, lv_payload, prepared, grading.grade(prepared))
+
+        job = session.get(Job, result["job_id"])
+        assert (job.source, job.company.name, job.salary_min) == ("lever", "Jobgether", 100000)
+        assert enrichment_repo.get_assessment(session, job.id, "t").prompt_version == "assess-global-v1"
+
+    def test_the_dutch_pipeline_leaves_it_alone(self, session, lv_payload, monkeypatch):
+        stub_model(monkeypatch, '{"fit_score": 70, "verdict": "possible"}')
+        prepared = grading.prepare(lv_payload, "t", session)
+        job_id = grading.persist(session, lv_payload, prepared, grading.grade(prepared))["job_id"]
+
+        pending = {j.id for j in enrichment_repo.pending_assessment(
+            session, profile_name="t", prompt_version="assess-v4", limit=100_000)}
+
+        assert job_id not in pending

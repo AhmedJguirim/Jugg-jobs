@@ -51,6 +51,8 @@ PLATFORM_HOSTS = {
     "job-boards.greenhouse.io": "greenhouse",
     "boards.greenhouse.io": "greenhouse",
     "job-boards.eu.greenhouse.io": "greenhouse",
+    "jobs.lever.co": "lever",
+    "jobs.eu.lever.co": "lever",
 }
 
 
@@ -66,9 +68,13 @@ def detect_platform(url: str) -> Optional[str]:
 
 def _registry() -> dict[str, Callable[[str, str], ParseResult]]:
     # Imported here so the modules can import the types above without a cycle.
-    from app.parsers import ashbyhq, greenhouse
+    from app.parsers import ashbyhq, greenhouse, lever
 
-    return {ashbyhq.PLATFORM: ashbyhq.parse, greenhouse.PLATFORM: greenhouse.parse}
+    return {
+        ashbyhq.PLATFORM: ashbyhq.parse,
+        greenhouse.PLATFORM: greenhouse.parse,
+        lever.PLATFORM: lever.parse,
+    }
 
 
 def parse_listing(platform: str, url: str, html: str) -> ParseResult:

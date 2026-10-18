@@ -62,3 +62,12 @@ its page's posting text word for word with no scripts, styles or classes.
   the detection (no title plus "couldn't find anything here" / "no longer open"
   wording) is covered by made-up examples only.
 - Parsing creates `companies` rows in the shared tables, as for the other parsers.
+
+## Update: hooked in (2026-10-18)
+
+After the four pages checked out, `jobs.lever.co` and `jobs.eu.lever.co` were added
+to `PLATFORM_HOSTS` and the parser to `_registry`. The four raw listings saved as
+`unsupported` were set back to waiting so the Grade button and bulk grading pick
+them up; a Lever URL saved from now on waits to be graded like the others. The
+grader's Salary fact carries the currency kept in `raw` (ADR-0019), so the Jobgether
+US range reads `100000-130000 USD (yearly)`.

@@ -256,13 +256,29 @@ class TestNotFoundAndUnreadable:
         assert j.title == "Engineer" and j.description is None
 
 
-class TestNotHookedYet:
-    """Lever is not in the platform registry, so no listing reaches this parser
-    through the real flow. When it is hooked, replace this class with detection tests."""
+class TestRegistered:
+    @pytest.mark.parametrize("url", [
+        FULL_STACK,
+        f"https://jobs.eu.lever.co/acme/{UUID}",
+        f"https://jobs.lever.co/acme/{UUID}/apply",
+        f" https://JOBS.LEVER.CO/acme/{UUID} ",
+    ])
+    def test_lever_urls_are_detected(self, url):
+        assert detect_platform(url) == "lever"
 
-    def test_the_platform_is_not_detected(self):
-        assert detect_platform(FULL_STACK) is None
+    @pytest.mark.parametrize("url", [
+        "https://lever.co/acme/x",                      # the marketing site, not a job board
+        "https://example.com/jobs.lever.co/acme/x",     # host only, not path
+        "https://notlever.co/acme/x",
+    ])
+    def test_lookalikes_are_not(self, url):
+        assert detect_platform(url) is None
 
-    def test_the_registry_has_no_lever_parser(self):
-        with pytest.raises(ListingParseError):
-            parse_listing("lever", FULL_STACK, page(PAGES[FULL_STACK]))
+    def test_the_dispatch_reaches_the_parser(self):
+        result = parse_listing("lever", FULL_STACK, page(PAGES[FULL_STACK]))
+
+        assert isinstance(result, ParsedListing) and result.job.title == "Full Stack Microsoft Developer"
+
+    def test_the_other_platforms_are_still_detected(self):
+        assert detect_platform("https://jobs.ashbyhq.com/acme/ac527b20-e9fc-41d1-841c-bc881e2abef6") == "ashbyhq"
+        assert detect_platform("https://job-boards.greenhouse.io/2k/jobs/8035080003") == "greenhouse"

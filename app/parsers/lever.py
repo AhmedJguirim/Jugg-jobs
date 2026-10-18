@@ -23,8 +23,8 @@ spells the slug ("Insider One"). When none does, the slug is capitalised
 only from a sentence about pay (see `common.read_pay`), so "a $500M Series E" in an
 "About us" paragraph is not a salary.
 
-Not hooked to the real flow yet: it is not in `PLATFORM_HOSTS` / `_registry` in
-`app/parsers/__init__.py`, so no listing is parsed with it until it is.
+Registered in `PLATFORM_HOSTS` / `_registry` (`app/parsers/__init__.py`), so a
+listing on one of `HOSTS` is graded and turned into a job like an Ashby one.
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ from app.text.dom import Node, parse_html
 
 PLATFORM = "lever"
 
-# Hosts a Lever job page is served from; keep in step with `PLATFORM_HOSTS` when hooked.
+# Hosts a Lever job page is served from; keep in step with `PLATFORM_HOSTS`.
 HOSTS = ("jobs.lever.co", "jobs.eu.lever.co")
 
 _JOB_ID = re.compile(r"^[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$")
