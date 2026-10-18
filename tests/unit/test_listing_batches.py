@@ -132,6 +132,11 @@ class TestSavingOnlyStores:
         assert response.json()["status"] is None and "workflow_id" not in response.json()
         assert client.started == []
 
+    def test_a_breezy_listing_waits_to_be_graded(self, client):
+        response = self.save(client, "https://localize.breezy.hr/p/4ba5bc0d9700-senior-platform-engineer")
+
+        assert response.json()["status"] is None and client.started == []
+
     def test_a_workable_listing_waits_to_be_graded(self, client):
         response = self.save(client, "https://apply.workable.com/dacodes-mx/j/5E3ED2DFA7")
 

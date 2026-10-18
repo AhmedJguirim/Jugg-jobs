@@ -24,8 +24,9 @@ pages, and the few that appear as free text ("Location: Kyiv, Ukraine - Remote")
 stay in the description, which the grader reads. A copy that includes the page's
 header would carry more; this parser does not read it because no sample has one.
 
-Not hooked to the real flow yet: it is not in `PLATFORM_HOSTS` / `_registry` in
-`app/parsers/__init__.py`, so no listing is parsed with it until it is.
+Registered in `PLATFORM_HOSTS` (as "breezy.hr", which matches every company
+subdomain) and `_registry` in `app/parsers/__init__.py`, so a listing on
+`<company>.breezy.hr` is graded and turned into a job like the other platforms'.
 """
 
 from __future__ import annotations

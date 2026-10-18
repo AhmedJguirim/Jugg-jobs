@@ -54,6 +54,7 @@ PLATFORM_HOSTS = {
     "jobs.lever.co": "lever",
     "jobs.eu.lever.co": "lever",
     "apply.workable.com": "workable",
+    "breezy.hr": "breezy",  # every company is a subdomain: <company>.breezy.hr
 }
 
 
@@ -69,10 +70,11 @@ def detect_platform(url: str) -> Optional[str]:
 
 def _registry() -> dict[str, Callable[[str, str], ParseResult]]:
     # Imported here so the modules can import the types above without a cycle.
-    from app.parsers import ashbyhq, greenhouse, lever, workable
+    from app.parsers import ashbyhq, breezy, greenhouse, lever, workable
 
     return {
         ashbyhq.PLATFORM: ashbyhq.parse,
+        breezy.PLATFORM: breezy.parse,
         greenhouse.PLATFORM: greenhouse.parse,
         lever.PLATFORM: lever.parse,
         workable.PLATFORM: workable.parse,

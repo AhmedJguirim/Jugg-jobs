@@ -65,3 +65,12 @@ the slash), and an upper-case host leaked into the canonical link. Both fixed.
   header because no saved page has one; supporting it needs a sample.
 - Several postings are written by agencies for unnamed clients; the company is the poster.
 - Parsing creates `companies` rows in the shared tables, as for the other parsers.
+
+## Update: hooked in (2026-10-18)
+
+After the pages checked out, `breezy.hr` was added to `PLATFORM_HOSTS` (which matches every
+`<company>.breezy.hr`) and the parser to `_registry`. The nine raw listings saved as
+`unsupported` were set back to waiting so the Grade button and bulk grading pick them up;
+a Breezy URL saved from now on waits to be graded like the others. The bare `breezy.hr` /
+`www.breezy.hr` (the marketing site) is detected too but the parser refuses it as having no
+company subdomain, so such a link ends as unreadable rather than as a job.

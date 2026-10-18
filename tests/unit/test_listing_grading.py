@@ -315,3 +315,44 @@ class TestWorkableListings:
 
         assert result["status"] == listing_processing.NOT_FOUND and result["platform"] == "workable"
         assert "no longer available" in result["reason"]
+
+
+class TestBreezyListings:
+    URL = "https://localize.breezy.hr/p/4ba5bc0d9700-senior-platform-engineer"
+
+    @pytest.fixture
+    def bz_payload(self):
+        html = (FIXTURES.parent / "breezy" / "localize_senior_platform_engineer.html").read_text(encoding="utf-8")
+        parsed = parse_listing("breezy", self.URL, html)
+        assert isinstance(parsed, ParsedListing)
+        return parsed.job.model_dump(mode="json")
+
+    def test_it_is_graded_from_the_description_alone_and_then_created(self, session, bz_payload, monkeypatch):
+        stub_model(monkeypatch, '{"fit_score": 65, "verdict": "possible", "summary": "A role."}')
+        prepared = grading.prepare(bz_payload, "t", session)
+
+        # These pages carry no header, so there are no facts: the model reads the text.
+        assert prepared["company"] == "Localize" and prepared["facts"] == {}
+        assert "Senior Platform Engineer" in prepared["title"]
+        result = grading.persist(session, bz_payload, prepared, grading.grade(prepared))
+
+        job = session.get(Job, result["job_id"])
+        assert (job.source, job.external_id, job.company.name) == ("breezy", "4ba5bc0d9700", "Localize")
+        assert job.raw["title_source"] == "text"
+
+    def test_the_dutch_pipeline_leaves_it_alone(self, session, bz_payload, monkeypatch):
+        stub_model(monkeypatch, '{"fit_score": 65, "verdict": "possible"}')
+        prepared = grading.prepare(bz_payload, "t", session)
+        job_id = grading.persist(session, bz_payload, prepared, grading.grade(prepared))["job_id"]
+
+        pending = {j.id for j in enrichment_repo.pending_assessment(
+            session, profile_name="t", prompt_version="assess-v4", limit=100_000)}
+
+        assert job_id not in pending
+
+    def test_a_page_with_no_description_is_unreadable_not_unsupported(self):
+        from app.services import listing_processing
+
+        result = listing_processing.parse({"id": 1, "url": self.URL, "html": "<div class='positions'></div>"})
+
+        assert result["status"] == listing_processing.UNPARSEABLE and result["platform"] == "breezy"

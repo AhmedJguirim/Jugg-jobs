@@ -226,13 +226,36 @@ class TestSlugHelpers:
         assert slug_words("senior--ai_engineer") == "Senior AI Engineer"
 
 
-class TestNotHookedYet:
-    """Breezy is not in the platform registry, so no listing reaches this parser
-    through the real flow. When it is hooked, replace this class with detection tests."""
+class TestRegistered:
+    @pytest.mark.parametrize("url", [
+        URLS[0],
+        "https://vigil-global.breezy.hr/p/c00f53764a7a01-senior-full-stack-engineer-tech-lead",
+        " https://ACME.BREEZY.HR/p/174ef3f9cc50-backend-engineer/ ",
+    ])
+    def test_company_subdomains_are_detected(self, url):
+        assert detect_platform(url) == "breezy"
 
-    def test_the_platform_is_not_detected(self):
-        assert detect_platform(URLS[0]) is None
+    @pytest.mark.parametrize("url", [
+        "https://example.com/acme.breezy.hr/p/174ef3f9cc50-x",   # host only, not path
+        "https://notbreezy.hr/p/174ef3f9cc50-x",
+        "https://acme.breezy.hr.evil.example/p/174ef3f9cc50-x",
+    ])
+    def test_lookalikes_are_not(self, url):
+        assert detect_platform(url) is None
 
-    def test_the_registry_has_no_breezy_parser(self):
+    def test_the_marketing_site_is_detected_but_is_not_a_job(self):
+        # `www.breezy.hr` reaches the parser, which refuses it: it has no company subdomain.
+        assert detect_platform("https://www.breezy.hr/") == "breezy"
         with pytest.raises(ListingParseError):
-            parse_listing("breezy", URLS[0], page(URLS[0]))
+            parse("https://www.breezy.hr/", make("<p>x</p>"))
+
+    def test_the_dispatch_reaches_the_parser(self):
+        result = parse_listing("breezy", URLS[3], page(URLS[3]))
+
+        assert isinstance(result, ParsedListing) and result.job.company_name == "Localize"
+
+    def test_the_other_platforms_are_still_detected(self):
+        assert detect_platform("https://jobs.ashbyhq.com/acme/ac527b20-e9fc-41d1-841c-bc881e2abef6") == "ashbyhq"
+        assert detect_platform("https://job-boards.greenhouse.io/2k/jobs/8035080003") == "greenhouse"
+        assert detect_platform("https://jobs.lever.co/acme/ac527b20-e9fc-41d1-841c-bc881e2abef6") == "lever"
+        assert detect_platform("https://apply.workable.com/acme/j/ABCDEF1234") == "workable"
