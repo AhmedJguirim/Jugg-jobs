@@ -2,6 +2,8 @@
 
 - `description_html`: a posting's description as HTML that is safe to show.
 - `parse_compensation`: a pay range out of a sentence.
+- `read_pay`: the pay range of a whole description, from the sentence that states it.
+- `place_from_text`: a `LocationBase` from a postal "City, Region, Country" string.
 """
 
 from __future__ import annotations
@@ -9,6 +11,7 @@ from __future__ import annotations
 import re
 from typing import Optional
 
+from app.schemas.job import LocationBase
 from app.text.dom import Node
 
 _EMPTY_PARAGRAPH = re.compile(r"<p></p>")
@@ -72,3 +75,89 @@ def parse_compensation(text: str) -> tuple[Optional[int], Optional[int], Optiona
     if period is None:
         period = "yearly" if high >= 10000 else "unspecified"
     return low, high, period
+
+
+# A sentence is about pay when it says so, and not about pay when it is about
+# something else that has dollar amounts in it.
+_PAY_WORDS = (
+    "pay range", "salary", "base pay", "base compensation", "compensation range",
+    "pay between", "annual base", "hourly rate", "base salary", "pay for this",
+    "salary range", "annualized",
+)
+_NOT_PAY_WORDS = ("equity", "stock", "bonus", "espp", "rsu", "stipend", "refresh", "commission")
+_CURRENCY_CODE = re.compile(r"\b(USD|CAD|EUR|GBP|AUD|NZD|CHF|PLN|SEK|NOK|DKK|INR|SGD|JPY|BRL|MXN)\b")
+# Symbols stand in for a code only when no code is written. "$" is read as US
+# dollars: a bare "$" in a posting is far more often USD than CAD/AUD, which
+# say so ("CAD $ 164,490").
+_CURRENCY_SYMBOLS = (("zł", "PLN"), ("€", "EUR"), ("£", "GBP"), ("$", "USD"))
+_MAX_SENTENCE = 300
+_SENTENCE_BREAK = re.compile(r"(?<=[.!?])\s+")
+
+
+
+def _pay_sentences(text: str) -> list[str]:
+    """Sentences of a description that state pay, in order."""
+    found = []
+    for sentence in _SENTENCE_BREAK.split(text or ""):
+        lowered = sentence.lower()
+        if any(w in lowered for w in _PAY_WORDS) and not any(w in lowered for w in _NOT_PAY_WORDS):
+            if re.search(r"\d", sentence):
+                found.append(sentence.strip())
+    return found
+
+
+def _currency(sentence: str) -> tuple[Optional[str], Optional[str]]:
+    """(code, how we know): "code" when written, "symbol" when inferred from one."""
+    code = _CURRENCY_CODE.search(sentence)
+    if code:
+        return code.group(1), "code"
+    for symbol, inferred in _CURRENCY_SYMBOLS:
+        if symbol in sentence:
+            return inferred, "symbol"
+    return None, None
+
+
+def read_pay(text: str) -> tuple[Optional[int], Optional[int], Optional[str], Optional[dict]]:
+    """(min, max, type, details) from the first sentence of `text` that states pay.
+
+    Only a sentence about pay counts, never one about equity, a bonus or a
+    stipend, so a "$500M Series E" or "New hire equity: $24,000" is not a salary.
+    `details` is what to keep in `raw`: the sentence and its currency (the salary
+    columns have none). All `None` when no pay is stated.
+    """
+    for sentence in _pay_sentences(text):
+        low, high, period = parse_compensation(sentence)
+        if low is not None:
+            currency, source = _currency(sentence)
+            details = {"text": sentence[:_MAX_SENTENCE], "currency": currency, "currency_source": source}
+            return low, high, period, details
+    return None, None, None, None
+
+
+# Two letters after a comma are a US state ("Austin, TX") only if they are one;
+# otherwise they are a country code ("London, UK", "Amsterdam, NL"). The few codes
+# that are both ("CA" Canada/California, "DE" Germany/Delaware) are read as states.
+_US_STATES = frozenset(
+    "AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM "
+    "NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY DC".split()
+)
+
+
+def place_from_text(text: str) -> Optional[LocationBase]:
+    """A place, only when the text is a postal "City, Region, Country".
+
+    "Remote Poland", "Canada (Remote)", "Multiple locations", a lone country or a
+    lone city are not places the cities table should hold; callers keep that text
+    in `raw["sections"]`.
+    """
+    if not text or re.search(r"remote|hybrid|anywhere|multiple|various|worldwide", text, re.IGNORECASE):
+        return None
+    parts = [p.strip() for p in text.split(",") if p.strip()]
+    if len(parts) >= 3:
+        return LocationBase(city=parts[0], province=parts[1], country_name=parts[-1])
+    if len(parts) == 2:
+        # "Austin, TX" is a state; "Berlin, Germany" and "London, UK" are countries.
+        if parts[1] in _US_STATES:
+            return LocationBase(city=parts[0], province=parts[1])
+        return LocationBase(city=parts[0], country_name=parts[1])
+    return None

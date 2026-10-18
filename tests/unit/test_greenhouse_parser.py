@@ -14,7 +14,8 @@ from app.parsers import (
     detect_platform,
     parse_listing,
 )
-from app.parsers.greenhouse import _location, parse
+from app.parsers.common import place_from_text as _location
+from app.parsers.greenhouse import parse
 from app.text.dom import parse_html
 
 FIXTURES = pathlib.Path(__file__).resolve().parent.parent / "fixtures" / "greenhouse"
@@ -171,6 +172,9 @@ class TestLocation:
         ("San Mateo, California, United States", ("San Mateo", "California", "United States")),
         ("Berlin, Germany", ("Berlin", None, "Germany")),
         ("Austin, TX", ("Austin", "TX", None)),
+        ("London, UK", ("London", None, "UK")),
+        ("Amsterdam, NL", ("Amsterdam", None, "NL")),
+        ("Washington, DC", ("Washington", "DC", None)),
         ("New York, New York, United States", ("New York", "New York", "United States")),
     ])
     def test_places(self, text, expected):

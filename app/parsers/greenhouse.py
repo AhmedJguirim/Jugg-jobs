@@ -33,8 +33,8 @@ from typing import Optional
 from urllib.parse import urlsplit
 
 from app.parsers import ListingNotFound, ListingParseError, ParsedListing, ParseResult
-from app.parsers.common import description_html, parse_compensation
-from app.schemas.job import JobCreate, LocationBase
+from app.parsers.common import description_html, place_from_text, read_pay
+from app.schemas.job import JobCreate
 from app.text.dom import Node, parse_html
 
 PLATFORM = "greenhouse"
@@ -53,22 +53,6 @@ _NOT_FOUND_PHRASES = (
     "page you were looking for",
 )
 
-# A sentence is about pay when it says so, and not about pay when it is about
-# something else that has dollar amounts in it.
-_PAY_WORDS = (
-    "pay range", "salary", "base pay", "base compensation", "compensation range",
-    "pay between", "annual base", "hourly rate", "base salary", "pay for this",
-    "salary range", "annualized",
-)
-_NOT_PAY_WORDS = ("equity", "stock", "bonus", "espp", "rsu", "stipend", "refresh", "commission")
-_CURRENCY_CODE = re.compile(r"\b(USD|CAD|EUR|GBP|AUD|NZD|CHF|PLN|SEK|NOK|DKK|INR|SGD|JPY|BRL|MXN)\b")
-# Symbols stand in for a code only when no code is written. "$" is read as US
-# dollars: a bare "$" in a posting is far more often USD than CAD/AUD, which
-# say so ("CAD $ 164,490").
-_CURRENCY_SYMBOLS = (("zł", "PLN"), ("€", "EUR"), ("£", "GBP"), ("$", "USD"))
-_MAX_SENTENCE = 300
-_SENTENCE_BREAK = re.compile(r"(?<=[.!?])\s+")
-
 
 def parse(url: str, html: str) -> ParseResult:
     base, board, job_id = _split_url(url)
@@ -85,15 +69,7 @@ def parse(url: str, html: str) -> ParseResult:
     description_node = root.find(cls="job__description")
     location_text = _text_of(root.find(cls="job__location"))
     company = _company(root)
-    sentences = _pay_sentences(description_node)
-
-    salary_min = salary_max = salary_type = None
-    compensation = None
-    if sentences:
-        salary_min, salary_max, salary_type = parse_compensation(sentences[0])
-        if salary_min is not None:
-            currency, source = _currency(sentences[0])
-            compensation = {"text": sentences[0][:_MAX_SENTENCE], "currency": currency, "currency_source": source}
+    salary_min, salary_max, salary_type, compensation = read_pay(_text_of(description_node))
 
     title = title_node.text()
     detail_url = f"{base}/{board}/jobs/{job_id}"
@@ -108,7 +84,7 @@ def parse(url: str, html: str) -> ParseResult:
         status="active",
         origin="manual",
         company_name=company,
-        location=_location(location_text),
+        location=place_from_text(location_text),
         salary_min=salary_min,
         salary_max=salary_max,
         salary_type=salary_type,
@@ -164,46 +140,3 @@ def _company(root: Node) -> Optional[str]:
     alert = root.find(cls="job-alert")
     match = _COMPANY.search(alert.text()) if alert is not None else None
     return match.group(1).strip() if match else None
-
-
-def _pay_sentences(description: Optional[Node]) -> list[str]:
-    """Sentences of the description that state pay, in order."""
-    if description is None:
-        return []
-    found = []
-    for sentence in _SENTENCE_BREAK.split(description.text()):
-        lowered = sentence.lower()
-        if any(w in lowered for w in _PAY_WORDS) and not any(w in lowered for w in _NOT_PAY_WORDS):
-            if re.search(r"\d", sentence):
-                found.append(sentence.strip())
-    return found
-
-
-def _currency(sentence: str) -> tuple[Optional[str], Optional[str]]:
-    """(code, how we know): "code" when written, "symbol" when inferred from one."""
-    code = _CURRENCY_CODE.search(sentence)
-    if code:
-        return code.group(1), "code"
-    for symbol, inferred in _CURRENCY_SYMBOLS:
-        if symbol in sentence:
-            return inferred, "symbol"
-    return None, None
-
-
-def _location(text: str) -> Optional[LocationBase]:
-    """A place, only when the text is a postal "City, Region, Country".
-
-    "Remote Poland", "Canada (Remote)", "Multiple locations" are not places and
-    are left in `raw["sections"]` rather than put in the cities table.
-    """
-    if not text or re.search(r"remote|hybrid|anywhere|multiple|various|worldwide", text, re.IGNORECASE):
-        return None
-    parts = [p.strip() for p in text.split(",") if p.strip()]
-    if len(parts) >= 3:
-        return LocationBase(city=parts[0], province=parts[1], country_name=parts[-1])
-    if len(parts) == 2:
-        # "Austin, TX" is a state; "Berlin, Germany" is a country.
-        if re.fullmatch(r"[A-Z]{2}", parts[1]):
-            return LocationBase(city=parts[0], province=parts[1])
-        return LocationBase(city=parts[0], country_name=parts[1])
-    return None
