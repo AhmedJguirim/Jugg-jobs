@@ -1,66 +1,46 @@
 {
   "name": "default",
-  "_comment": "EDIT THIS. It is what every vacancy is scored against. The starting values were inferred from this project's own stack (Python/FastAPI/SQLAlchemy/PostgreSQL, prior Laravel/Horizon experience) and from the stated fact that you do not read Dutch. Nothing here was confirmed with you, so correct it before trusting any fit_score.",
-  "headline": "Backend / full-stack software engineer",
+  "_comment": "An example. Copy it to profiles/<you>.json, make it describe you, and set LLM_DEFAULT_PROFILE=<you> in .env. Every posting is scored against it. Skill tiers decide the score band: core 75-95, proficient 55-75, familiar 30-55.",
+  "headline": "Backend software engineer - PHP, Laravel and PostgreSQL",
+  "summary": "Backend engineer with four years of production experience building APIs and background jobs for SaaS products. Comfortable owning a feature from the database schema to the deploy.",
+  "years_experience": 4,
+  "seniority": ["mid", "senior"],
   "target_roles": [
     "Backend Developer",
-    "Python Developer",
+    "PHP Developer",
+    "Laravel Developer",
     "Full Stack Developer",
-    "Software Engineer",
-    "PHP / Laravel Developer",
-    "Data Engineer"
+    "Software Engineer"
   ],
-  "seniority": ["mid", "senior"],
+  "skills": {
+    "core": ["PHP", "Laravel", "PostgreSQL", "MySQL", "REST APIs", "Redis"],
+    "proficient": ["JavaScript", "Vue", "Docker", "Git", "Linux"],
+    "familiar": ["Python", "TypeScript", "React", "AWS", "Kubernetes"]
+  },
   "education": {
-    "_comment": "Dutch adverts state a level: MBO (vocational), HBO (university of applied sciences, ~bachelor), WO (research university, bachelor/master). List the levels your degree meets.",
-    "highest_level": "Bachelor's degree (Computer Science)",
-    "meets_dutch_levels": ["MBO", "HBO"],
+    "highest_level": "Bachelor's degree",
     "field": "computer science"
   },
-  "strong_skills": [
-    "Python",
-    "FastAPI",
-    "SQLAlchemy",
-    "PostgreSQL",
-    "PHP",
-    "Laravel",
-    "REST APIs",
-    "SQL",
-    "Git",
-    "Docker"
-  ],
-  "familiar_skills": [
-    "JavaScript",
-    "TypeScript",
-    "Vue",
-    "React",
-    "Redis",
-    "Playwright",
-    "CI/CD",
-    "Linux",
-    "queues and background jobs",
-    "LLM / Ollama integration"
-  ],
   "not_interested_in": [
-    "healthcare and nursing roles",
-    "logistics, warehouse and driving roles",
-    "retail, hospitality and call-centre roles",
-    "field technician and installation work",
     "sales and account management",
-    "teaching and education roles"
+    "teaching roles",
+    "field technician and installation work"
   ],
   "languages": {
     "fluent": ["English"],
-    "none": ["Dutch"]
+    "basic": ["French"],
+    "none": ["German", "Dutch"]
   },
+  "citizenship": ["Portuguese"],
   "location": {
-    "country": "Netherlands",
-    "preferred": ["Amsterdam", "Utrecht", "Rotterdam", "Den Haag", "Eindhoven"],
-    "remote_preference": "hybrid or remote preferred, onsite acceptable"
+    "based_in": "Lisbon, Portugal",
+    "work_authorization": "EU citizen: can work anywhere in the EU without a permit. Elsewhere, remote as a contractor or through an Employer of Record, or on site with visa sponsorship.",
+    "relocation": "Willing to relocate within Europe. Outside Europe only with sponsorship and relocation support.",
+    "remote_preference": "Remote preferred, hybrid acceptable."
   },
   "dealbreakers": [
-    "requires fluent or business-level Dutch",
-    "requires a licensed profession the candidate is not registered for (e.g. nursing/BIG, medical, legal bar)",
-    "unpaid or commission-only"
+    "requires fluent or business-level German or Dutch",
+    "requires a licensed profession the candidate is not registered for (e.g. nursing, medical, legal bar)",
+    "unpaid, equity-only or commission-only"
   ]
 }
