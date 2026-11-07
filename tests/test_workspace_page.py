@@ -169,3 +169,66 @@ def test_cleanup_button_reflects_what_there_is_to_clean(app_server: str, page: P
         expect(section).to_contain_text(f"{stats['listings']} graded listing(s)")
     else:
         expect(button).to_be_disabled()
+
+
+def _mock_urls_api(page: Page, fetchable: int, statuses: list[dict]):
+    """Stand in for the server: the list, starting a run, and its progress. Nothing
+    is fetched or written - "Process all" does both."""
+    polled = {"n": 0}
+
+    def handle(route):
+        request = route.request
+        path = request.url.split("?")[0]
+        if path.endswith("/manual-job-listing-urls"):
+            route.fulfill(json={"total": fetchable, "fetchable": fetchable, "items": []})
+        elif path.endswith("/process-all") and request.method == "POST":
+            route.fulfill(status=202, json={"workflow_id": "wf-1", "total": 3})
+        elif path.endswith("/process-all"):
+            route.fulfill(json={"workflow_id": None})
+        elif path.endswith("/process-all/wf-1"):
+            body = statuses[min(polled["n"], len(statuses) - 1)]
+            polled["n"] += 1
+            route.fulfill(json={"workflow_id": "wf-1", **body})
+        else:
+            route.continue_()
+
+    page.route(re.compile(r".*/api/workspace/manual-job-listing-urls.*"), handle)
+
+
+def test_process_all_is_disabled_when_nothing_can_be_fetched(app_server: str, page: Page):
+    _mock_urls_api(page, 0, [])
+
+    page.goto(f"{app_server}/workspace/urls")
+
+    expect(page.locator("#process-all")).to_be_disabled()
+    expect(page.locator("#process-all")).to_contain_text("Process all (0)")
+
+
+def test_process_all_shows_its_progress_and_what_it_did(app_server: str, page: Page):
+    running = {"state": "running", "progress": {
+        "total": 3, "done": 1, "added": 1, "gone": 0, "retry": 0, "exists": 0,
+        "current": "https://jobs.lever.co/acme/2", "problems": [],
+    }}
+    done = {"state": "done", "progress": {
+        "total": 3, "done": 3, "added": 2, "gone": 0, "retry": 1, "exists": 0, "current": None,
+        "problems": [{"url": "https://jobs.lever.co/acme/3", "status": "blocked", "note": "HTTP 429"}],
+    }}
+    _mock_urls_api(page, 3, [running, done])
+
+    page.goto(f"{app_server}/workspace/urls")
+    button = page.locator("#process-all")
+    expect(button).to_contain_text("Process all (3)")
+    expect(button).to_be_enabled()
+    button.click()
+
+    progress = page.locator("#process-progress")
+    expect(progress).to_contain_text("1 of 3 done")
+    expect(progress.get_by_role("button", name="Cancel")).to_be_visible()
+    expect(progress).to_contain_text("https://jobs.lever.co/acme/2")
+    expect(button).to_be_disabled()
+
+    expect(progress).to_contain_text("Finished", timeout=8000)
+    expect(progress).to_contain_text("2 added to the waiting list")
+    expect(progress.get_by_role("button", name="Cancel")).to_be_hidden()
+    expect(progress.get_by_role("link", name=re.compile("Open the waiting list"))).to_be_visible()
+    expect(progress).to_contain_text("HTTP 429")

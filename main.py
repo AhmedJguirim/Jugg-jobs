@@ -17,7 +17,7 @@ from app.repositories import enrichment as enrichment_repo
 from app.repositories import job as job_repo
 from app.services.job_ingest import DEFAULT_LIMIT, IngestStats
 from app.workflows import enrichment as enrichment_flow
-from app.workflows import listing_grading, listing_processing  # noqa: F401  (register the workflows)
+from app.workflows import listing_fetch, listing_grading, listing_processing  # noqa: F401  (register the workflows)
 from app.logging_setup import log
 
 # Welcome to DBOS!
@@ -626,5 +626,6 @@ if __name__ == "__main__":
     # work this process starts.
     enrichment_flow.register_queues()
     listing_grading.register_queue()
+    listing_fetch.register_queue()
     DBOS.register_queue(QUEUE_NAME, worker_concurrency=DEFAULT_WORKER_CONCURRENCY, on_conflict="never_update")
     uvicorn.run(app, host="0.0.0.0", port=8000)

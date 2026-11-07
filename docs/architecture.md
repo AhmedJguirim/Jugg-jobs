@@ -69,6 +69,7 @@ Supporting trees, outside the runtime path:
 | `app/workflows/listing_processing.py` | `process_raw_listing_workflow`: raw listing -> parse -> `jobs_test` |
 | `app/api/jobs_test.py` | Read-only API behind `/jobs-test`: list, and one record with its description |
 | `html/jobs_test.html` | The parsed listings with a detail drawer, served at `/jobs-test` |
+| `app/workflows/listing_fetch.py`, `app/services/listing_fetch.py` (`process_link`) | The "Process all" button on `/workspace/urls`: `fetch_listings_workflow` fetches the page of every waiting link, one step per link, on the `listing-fetch` queue (concurrency 1), and stores it as a raw listing - nothing is graded (ADR-0024). Progress is the `progress` event; `/api/workspace/manual-job-listing-urls/process-all[...]` start, follow and cancel it |
 | `app/integrations/listing_pages/`, `app/services/listing_fetch.py`, `scripts/fetch_listings.py` | Experimental: request a collected link and store the posting's block (what a hand copy would be) in `job_listings_test`, 1-3 s random pause between requests; every platform with a parser (ADR-0023) |
 | `html/workspace.html` | Raw listings form and list, served at `/workspace` |
 | `html/_topbar.html` | Section switch (Jobs / Workspace) and per-section nav, injected into every page by `main.py:render_page` |

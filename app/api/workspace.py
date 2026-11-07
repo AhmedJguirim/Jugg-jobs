@@ -19,7 +19,9 @@ from app.schemas.raw_job_listing import RawJobListingCreate
 from app.text.search_results import extract_result_urls
 from app.config import get_settings
 from app.parsers import detect_platform
+from app.services import listing_fetch as fetching
 from app.services import listing_progress
+from app.workflows import listing_fetch as fetch_flow
 from app.workflows import listing_grading as grading_flow
 from app.workflows.enrichment import STAGE_EVENT
 
@@ -263,6 +265,59 @@ def next_manual_job_listing_url(skip: int = Query(0, ge=0)):
         }
 
 
+def _active_fetch_run() -> str | None:
+    """Id of a "Process all" run that has not finished, if there is one."""
+    runs = DBOS.list_workflows(
+        queue_name=fetch_flow.FETCH_QUEUE, status=["ENQUEUED", "PENDING"],
+        limit=1, load_input=False, load_output=False,
+    )
+    return runs[0].workflow_id if runs else None
+
+
+@router.get("/api/workspace/manual-job-listing-urls/process-all")
+def active_process_all():
+    """The run in progress, so the page can pick it up again after a reload."""
+    return {"workflow_id": _active_fetch_run()}
+
+
+@router.post("/api/workspace/manual-job-listing-urls/process-all", status_code=202)
+def start_process_all():
+    """Fetch the page of every collected link that has none and put it on the waiting list.
+
+    Only links on a platform we can fetch are taken (up to `MAX_PER_RUN`, oldest
+    first). Nothing is graded: the pages wait for the Grade buttons. Returns at
+    once; poll the run for progress. One run at a time.
+    """
+    running = _active_fetch_run()
+    if running:
+        raise HTTPException(status_code=409, detail="a run is already in progress")
+    with session_scope() as session:
+        urls = url_repo.unprocessed_urls(session, fetch_flow.MAX_PER_RUN, fetching.fetchable_hosts())
+    if not urls:
+        raise HTTPException(status_code=400, detail="no collected link is waiting for its page")
+    handle = DBOS.enqueue_workflow(fetch_flow.FETCH_QUEUE, fetch_flow.fetch_listings_workflow, urls)
+    return {"workflow_id": handle.workflow_id, "total": len(urls)}
+
+
+@router.get("/api/workspace/manual-job-listing-urls/process-all/{workflow_id}")
+def process_all_status(workflow_id: str):
+    """Where a run has got to: its state and the counts it publishes as it goes."""
+    status = DBOS.get_workflow_status(workflow_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    progress = DBOS.get_event(workflow_id, fetch_flow.PROGRESS_EVENT, timeout_seconds=0)
+    return {"workflow_id": workflow_id, "state": listing_progress.state_of(status.status), "progress": progress}
+
+
+@router.post("/api/workspace/manual-job-listing-urls/process-all/{workflow_id}/cancel")
+def cancel_process_all(workflow_id: str):
+    """Stop a run after the link it is on. Pages already stored stay."""
+    if DBOS.get_workflow_status(workflow_id) is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    DBOS.cancel_workflow(workflow_id)
+    return {"workflow_id": workflow_id, "cancelled": True}
+
+
 @router.get("/api/workspace/manual-job-listing-urls")
 def list_manual_job_listing_urls(
     limit: int = Query(200, ge=1, le=1000),
@@ -274,6 +329,8 @@ def list_manual_job_listing_urls(
         processed = url_repo.processed_urls(session, [row.url for row in rows])
         return {
             "total": url_repo.count(session, only_unprocessed=hide_processed),
+            # How many of the waiting links "Process all" can fetch (their site has a fetcher).
+            "fetchable": url_repo.count_unprocessed(session, fetching.fetchable_hosts()),
             "items": [
                 {
                     "id": row.id,

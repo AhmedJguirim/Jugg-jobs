@@ -32,3 +32,4 @@ Consequences (what this costs us, including what it rules out).
 | [0021](0021-workable-parser.md) | A Workable parser, validated before it is hooked in | Accepted |
 | [0022](0022-breezy-parser.md) | A Breezy parser built on URL-derived title and company | Accepted |
 | [0023](0023-fetching-listing-html.md) | Fetching a listing's HTML from its link (experimental) | Accepted |
+| [0024](0024-process-all-links.md) | "Process all": fetched pages go onto the waiting list | Accepted |

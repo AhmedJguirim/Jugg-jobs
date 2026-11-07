@@ -42,7 +42,7 @@
 
   <body class="bg-ink text-fg font-sans min-h-screen antialiased">
     <!--TOPBAR-->
-    <div x-data="listingUrls()" x-init="load()" x-cloak class="max-w-[1000px] mx-auto px-4 sm:px-6 py-6">
+    <div x-data="listingUrls()" x-init="load(); resume()" x-cloak class="max-w-[1000px] mx-auto px-4 sm:px-6 py-6">
       <header class="mb-6">
         <h1 class="text-2xl sm:text-3xl font-bold tracking-tight">Listing URLs</h1>
         <p class="text-sm text-fg-muted mt-1">
@@ -67,9 +67,43 @@
       </form>
 
       <section>
-        <h2 class="text-[11px] uppercase tracking-wider text-fg-muted mb-2">
-          manual_job_listing_urls, waiting for HTML <span class="tabular-nums" x-text="'(' + total + ')'"></span>
-        </h2>
+        <div class="flex flex-wrap items-center justify-between gap-3 mb-2">
+          <h2 class="text-[11px] uppercase tracking-wider text-fg-muted">
+            manual_job_listing_urls, waiting for HTML <span class="tabular-nums" x-text="'(' + total + ')'"></span>
+          </h2>
+          <!-- Fetches every waiting link's page and puts it on the waiting list. Grades nothing. -->
+          <button type="button" id="process-all" @click="processAll()"
+                  :disabled="running || starting || !fetchable"
+                  title="Fetch the page of every waiting link and add it to the waiting list. Nothing is graded."
+                  class="px-4 py-1.5 text-sm rounded-md border border-cyan/60 text-cyan hover:bg-cyan/10 transition disabled:opacity-40 disabled:cursor-not-allowed">
+            <span x-text="starting ? 'Starting…' : running ? 'Processing…' : 'Process all (' + fetchable + ')'"></span>
+          </button>
+        </div>
+
+        <div x-show="run" id="process-progress" class="rounded-lg border border-ink-border bg-ink-raised p-3 mb-3 text-sm space-y-2" aria-live="polite">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <span x-text="runLabel()"></span>
+            <button type="button" x-show="running" @click="cancelRun()"
+                    class="px-2.5 py-1 text-xs rounded-md border border-danger/60 text-danger hover:bg-danger/10 transition">Cancel</button>
+          </div>
+          <div x-show="progress" class="h-1.5 rounded bg-ink overflow-hidden">
+            <div class="h-full bg-cyan transition-all" :style="'width:' + percent() + '%'"></div>
+          </div>
+          <p x-show="running && progress && progress.current" class="text-xs text-fg-muted break-all">
+            now: <span x-text="progress && progress.current"></span>
+          </p>
+          <p x-show="!running && progress && progress.added" class="text-xs">
+            <a href="/workspace" class="text-lily hover:underline">Open the waiting list to grade them →</a>
+          </p>
+          <details x-show="progress && progress.problems && progress.problems.length" class="text-xs">
+            <summary class="cursor-pointer text-warn">Not fetched this time (they stay in the list; run again to retry)</summary>
+            <ul class="mt-1 space-y-0.5 text-fg-muted">
+              <template x-for="p in (progress ? progress.problems : [])" :key="p.url">
+                <li class="break-all"><span x-text="p.status"></span> — <span x-text="p.note"></span> — <span x-text="p.url"></span></li>
+              </template>
+            </ul>
+          </details>
+        </div>
         <p x-show="!items.length" class="text-sm text-fg-muted">Nothing waiting: every stored link has its HTML (or its page is gone).</p>
         <div x-show="items.length" class="overflow-x-auto rounded-lg border border-ink-border">
           <table class="w-full text-sm">
@@ -113,12 +147,94 @@
           html: "",
           items: [],
           total: 0,
+          fetchable: 0,
           saving: false,
+          // "Process all": the run being followed, its state and the counts it publishes.
+          run: null,
+          state: null,
+          progress: null,
+          starting: false,
+          timer: null,
           notice: "",
           error: "",
           processUrl(item) {
             if (item.processed) return;
             location.href = "/workspace/raw/existing?url=" + encodeURIComponent(item.url);
+          },
+          get running() {
+            return this.state === "waiting" || this.state === "running";
+          },
+          percent() {
+            const p = this.progress;
+            return p && p.total ? Math.round((100 * p.done) / p.total) : 0;
+          },
+          runLabel() {
+            const p = this.progress;
+            const counts = p
+              ? `${p.done} of ${p.total} done: ${p.added} added to the waiting list, ${p.gone} removed postings, ${p.retry} to retry` +
+                (p.exists ? `, ${p.exists} already stored` : "")
+              : "";
+            if (this.state === "waiting") return "Queued - another run may be finishing first.";
+            if (this.state === "running") return "Fetching pages… " + counts;
+            if (this.state === "cancelled") return "Cancelled. " + counts;
+            if (this.state === "failed") return "The run failed - see the logs. " + counts;
+            return "Finished. " + counts;
+          },
+          async processAll() {
+            this.starting = true;
+            this.error = "";
+            this.notice = "";
+            try {
+              const res = await fetch("/api/workspace/manual-job-listing-urls/process-all", { method: "POST" });
+              const body = await res.json().catch(() => ({}));
+              if (!res.ok) throw new Error(typeof body.detail === "string" ? body.detail : "HTTP " + res.status);
+              this.follow(body.workflow_id);
+            } catch (e) {
+              this.error = "Could not start: " + e.message;
+            } finally {
+              this.starting = false;
+            }
+          },
+          follow(id) {
+            this.run = id;
+            this.state = "waiting";
+            this.progress = null;
+            this.poll();
+          },
+          async poll() {
+            clearTimeout(this.timer);
+            try {
+              const res = await fetch("/api/workspace/manual-job-listing-urls/process-all/" + encodeURIComponent(this.run));
+              if (!res.ok) throw new Error("HTTP " + res.status);
+              const body = await res.json();
+              this.state = body.state;
+              this.progress = body.progress;
+            } catch (e) {
+              this.error = "Could not read the run's progress: " + e.message;
+            }
+            if (this.running) {
+              this.timer = setTimeout(() => this.poll(), 2000);
+            } else {
+              await this.load(); // the list now shows what was stored
+            }
+          },
+          async cancelRun() {
+            try {
+              await fetch("/api/workspace/manual-job-listing-urls/process-all/" + encodeURIComponent(this.run) + "/cancel", { method: "POST" });
+            } catch (e) {
+              this.error = "Could not cancel: " + e.message;
+            }
+            this.poll();
+          },
+          async resume() {
+            // A reload during a run: pick the run up again.
+            try {
+              const res = await fetch("/api/workspace/manual-job-listing-urls/process-all");
+              const body = await res.json();
+              if (body.workflow_id) this.follow(body.workflow_id);
+            } catch (e) {
+              /* nothing to resume */
+            }
           },
           async load(freshUrls = new Set()) {
             try {
@@ -127,6 +243,7 @@
               const body = await res.json();
               this.items = body.items.map((i) => ({ ...i, fresh: freshUrls.has(i.url) }));
               this.total = body.total;
+              this.fetchable = body.fetchable;
             } catch (e) {
               this.error = "Could not load stored URLs: " + e.message;
             }

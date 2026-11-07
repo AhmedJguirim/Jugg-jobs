@@ -131,6 +131,8 @@ Listings from Ashby and future platforms are parsed (`app/parsers/`), graded by
 only and is fenced off from the rest in the pending queries and
 `enrich_job_workflow`; do not widen it. Grading is on demand (a Grade button or a
 bulk batch of up to 100), never a side effect of saving HTML. See ADR-0015/0016.
+The *Process all* button on `/workspace/urls` fetches the pages of collected links and
+puts them on that waiting list (still no grading): ADR-0023/0024.
 
 ## Gotchas that will cost you time
 
