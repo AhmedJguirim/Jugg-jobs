@@ -136,6 +136,18 @@ page and paste it into **Listing URLs**. The links are extracted and stored, eac
 one only once, so pasting overlapping searches is fine. Go through a few result
 pages and a few queries; the list grows quickly.
 
+To copy the element: right-click a result, choose **Inspect**, find the
+`<div id="search">` that wraps all the results in the Elements panel, then
+right-click it and choose **Copy → Copy outerHTML**.
+
+**Why this step is manual.** Google shows a CAPTCHA almost at once to anything
+that searches automatically, whether that is plain HTTP requests or a headless
+browser. I didn't find a reliable way around it that wasn't either fragile or a
+paid search API. Copying the results by hand takes a few seconds per page, and
+your normal browser session never trips the bot check. Everything after this
+step is automated. If you know a clean way to automate it, a pull request is
+very welcome.
+
 ### 2. Fetch the postings
 
 Press **Process all** on the same page. It fetches each waiting link's posting
