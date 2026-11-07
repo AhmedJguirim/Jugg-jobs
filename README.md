@@ -31,7 +31,7 @@ separately whether you can actually get the job.
 The scoring is careful about what a small model can be trusted with. Anything
 checkable, like whether a posting's stack is one you know, or whether the advert
 really restricts where you can work from, is decided in code. The model is only
-asked for judgement. `docs/architecture.md` explains why.
+asked for judgement. [`docs/architecture.md`](docs/architecture.md) explains how.
 
 ## What you need
 
@@ -63,14 +63,14 @@ values have working defaults.
 Create the database and the schema:
 
 ```shell
-psql -U postgres -c "CREATE DATABASE nljobs;"
+psql -U postgres -c "CREATE DATABASE job_hunt;"
 .venv\Scripts\python.exe -m alembic upgrade head
 ```
 
 ### Write your profile
 
 Every score is measured against a profile, so this step matters most. Copy the
-template and make it yours:
+example and make it yours:
 
 ```shell
 copy profiles\default.json profiles\me.json
@@ -87,23 +87,22 @@ The parts that change the results the most:
   ```json
   "skills": {
     "core":       ["PHP", "Laravel", "PostgreSQL"],
-    "proficient": ["JavaScript", "React"],
-    "familiar":   ["Python", "Docker"]
+    "proficient": ["JavaScript", "Vue", "Docker"],
+    "familiar":   ["Python", "React"]
   }
   ```
 
-- **`location`**: `based_in`, `work_authorization`, `relocation` and
-  `remote_preference`, in plain sentences. Eligibility is worked out from these,
-  so be specific. For example: "Based in Tunisia. Can work remotely as a
-  contractor or through an Employer of Record. On-site roles need visa
-  sponsorship."
-- **`languages`** (`fluent` / `none`) decides whether a language requirement
-  blocks you.
+- **`location`** and **`citizenship`**: `based_in`, `work_authorization`,
+  `relocation` and `remote_preference`, in plain sentences. Eligibility is worked
+  out from these, so be specific. For example: "Based in Tunisia. Can work
+  remotely as a contractor or through an Employer of Record. On-site roles need
+  visa sponsorship."
+- **`languages`** (`fluent` / `basic` / `none`) decides whether a language
+  requirement blocks you.
 - **`dealbreakers`** and **`not_interested_in`**: things that should sink a
   posting no matter how well the stack matches.
 
-You can keep several profiles (`--profile data-eng`, for example). Scores are
-stored per profile and never mix.
+You can keep several profiles. Scores are stored per profile and never mix.
 
 ## Using it
 
@@ -114,10 +113,11 @@ ollama serve
 .venv\Scripts\python.exe main.py
 ```
 
-The app serves on <http://localhost:8000>. It has no login and listens on all
+Open <http://localhost:8000>. The app has no login and listens on all
 interfaces, so don't run it on a network you don't trust.
 
-From there it's three steps: collect links, fetch the postings, grade them.
+The navigation follows the three steps: **Listing URLs**, **Raw listings**,
+**Job board**.
 
 ### 1. Collect links
 
@@ -132,9 +132,9 @@ site:breezy.hr ("Backend Developer" AND "Remote")
 ```
 
 In the browser's dev tools, copy the `<div id="search">` element of the results
-page and paste it into <http://localhost:8000/workspace/urls>. The links are
-extracted and stored, each one only once, so pasting overlapping searches is
-fine. Go through a few result pages and a few queries; the list grows quickly.
+page and paste it into **Listing URLs**. The links are extracted and stored, each
+one only once, so pasting overlapping searches is fine. Go through a few result
+pages and a few queries; the list grows quickly.
 
 ### 2. Fetch the postings
 
@@ -149,14 +149,14 @@ a form where you paste the posting's HTML yourself.
 
 ### 3. Grade
 
-Open <http://localhost:8000/workspace>. The list there is everything waiting to
-be graded. Press **Grade** on one posting, or **Bulk grade** to queue up to 100
-and walk away. They run one at a time on the GPU, with cooldown pauses if it
-gets hot. Graded postings appear on the board.
+Open **Raw listings** and pick either option. Under the form is the waiting
+list: everything fetched but not graded yet. Press **Grade** on one posting, or
+**Bulk grade** to queue up to 100 and walk away. They run one at a time on the
+GPU, with cooldown pauses if it gets hot. Graded postings appear on the board.
 
 ### Read the board
 
-Open <http://localhost:8000/board>. Every posting shows:
+Every posting on the **Job board** shows:
 
 - **Fit score (0-100)** for the work alone, banded by how well the stack matches
   your profile:
@@ -174,31 +174,23 @@ Open <http://localhost:8000/board>. Every posting shows:
   - **relocation**: on site or hybrid, and the advert says nothing that rules
     you out. Worth applying to; sponsorship is a conversation.
   - **blocked**: the advert itself rules you out (for example, it hires only in
-    countries you don't live in, or demands an existing permit).
+    countries you don't live in, or needs a language you don't speak).
 
 A good default view: set **Stack** to *core stack* and untick **Show blocked**.
 Mark postings **Applied** or **Archive** them to get them out of the way.
 
+Changed your profile? Grade again with
+`.venv\Scripts\python.exe scripts\process_listing.py --all --force`.
+
 ### When something looks stuck
 
-[`exec.md`](exec.md) is the operator runbook: what to start, how to read the
-progress lines, and what to do when grading stops. The most common case is work
-pending with no GPU activity and no errors. A job left behind by an older
-version of the code is holding the single model slot. Run
-`scripts\enrich_jobs.py --clear-stuck`.
+[`docs/operations.md`](docs/operations.md) covers what each page does and what to
+do when grading stops. The most common case is listings waiting with no GPU
+activity and no errors: a job left behind by an older version of the code is
+holding the single model slot. Stop the app and run
+`.venv\Scripts\python.exe scripts\clear_stuck.py`.
 
 Everything the app does is logged to `logs/dev.log`.
-
-## The Dutch job boards (secondary)
-
-The project started as a tool for the Dutch market. That part is still in the
-app: the **Companies** page and the scripts that pull vacancies from Nationale
-Vacaturebank, translate them from Dutch to English, and grade them the same way.
-
-It isn't usable out of the box, though. It depends on scraped data that is not
-part of this repository. If you want to set it up, email me at
-[jguirimahmed111@gmail.com](mailto:jguirimahmed111@gmail.com) and I'll help you
-get it running.
 
 ## How it's built
 
@@ -206,12 +198,18 @@ FastAPI serves the pages, DBOS runs the workflows, PostgreSQL holds the data,
 and the frontend is plain HTML with Tailwind and Alpine.js. There is one
 constraint the design is built around: **one GPU, one model, one call at a
 time.** Every model call goes through a single DBOS queue limited to one worker
-across all processes. Page fetching runs on separate queues, so fetching never
-waits on grading.
+across all processes. Fetching runs on its own queue, so it never waits on
+grading.
 
-- [`docs/architecture.md`](docs/architecture.md): layout, data model, pipelines.
+- [`docs/architecture.md`](docs/architecture.md): the flow, the layers, the data
+  model, and how a posting is graded.
 - [`docs/adr/`](docs/adr/): one short record per design decision and the
   reasoning behind it.
+
+The project started as a tool for Dutch job boards, scraping and translating
+vacancies from Nationale Vacaturebank. That part has been retired. If you're
+interested in it, email me at
+[jguirimahmed111@gmail.com](mailto:jguirimahmed111@gmail.com).
 
 ## Contributing
 
@@ -220,7 +218,7 @@ systems (Teamtailor, Recruitee, Personio, ...) are the most useful addition.
 
 Before you open a PR:
 
-- **Run the tests.** They need PostgreSQL and a `nljobs_test` database (they
+- **Run the tests.** They need PostgreSQL and a `job_hunt_test` database (they
   skip cleanly without it):
 
   ```shell
@@ -235,20 +233,20 @@ Before you open a PR:
 
 - **Schema changes go through Alembic** (`alembic revision --autogenerate`).
   A test fails if the models and migrations drift apart.
-- **Changed a prompt?** Bump its version in `app/llm/prompts.py`. That is how
-  existing grades get marked stale.
+- **Changed a prompt?** Bump `GLOBAL_ASSESSMENT_PROMPT_VERSION` in
+  `app/llm/global_prompts.py`. That is how existing grades get marked stale.
 - **Changed a workflow's steps?** Bump `APPLICATION_VERSION` in
-  `app/workflows/enrichment.py`, or DBOS will fail to replay workflows that were
+  `app/workflows/llm_queue.py`, or DBOS will fail to replay workflows that were
   in flight.
 - **SQL lives in `app/repositories/`** and nowhere else.
 - **A real design decision gets an ADR**: a new numbered file in `docs/adr/`.
   Don't edit accepted ones. Update `docs/architecture.md` in the same PR when
   you change something it describes.
-- **Adding a platform:** look at an existing parser in `app/parsers/`, its
-  fetcher in `app/integrations/listing_pages/`, and its fixtures in
-  `tests/fixtures/`. New parsers write to the `jobs_test` table first (visible
-  at `/jobs-test`) and are only wired into the real flow once their output
-  checks out.
+- **Adding a platform:** add a parser in `app/parsers/` (it gets the page's HTML
+  and returns a `JobCreate`), register its host in `PLATFORM_HOSTS`, teach
+  `app/integrations/listing_pages/extract.py` which element of the page to keep,
+  and add real pages to `tests/fixtures/<platform>/` with tests that parse them.
+  The existing five are the template.
 
 [`CLAUDE.md`](CLAUDE.md) has the same rules in more detail, plus the gotchas
 that tend to cost people an afternoon. It is written for AI coding assistants,
