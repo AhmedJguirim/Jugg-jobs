@@ -139,6 +139,10 @@ class Node:
             _render(child, drop_attrs, keep_attrs, allowed_tags) for child in self.children
         )
 
+    def outer_html(self) -> str:
+        """The element itself and everything in it (scripts and styles dropped)."""
+        return _render(self, frozenset(), None, None)
+
 
 _SAFE_URL = ("http://", "https://", "mailto:", "/", "#")
 

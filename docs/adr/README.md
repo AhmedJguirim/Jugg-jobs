@@ -31,3 +31,4 @@ Consequences (what this costs us, including what it rules out).
 | [0020](0020-lever-parser.md) | A Lever parser, validated before it is hooked in | Accepted |
 | [0021](0021-workable-parser.md) | A Workable parser, validated before it is hooked in | Accepted |
 | [0022](0022-breezy-parser.md) | A Breezy parser built on URL-derived title and company | Accepted |
+| [0023](0023-fetching-listing-html.md) | Fetching a listing's HTML from its link (experimental) | Accepted |

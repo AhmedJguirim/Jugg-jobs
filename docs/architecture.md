@@ -69,6 +69,7 @@ Supporting trees, outside the runtime path:
 | `app/workflows/listing_processing.py` | `process_raw_listing_workflow`: raw listing -> parse -> `jobs_test` |
 | `app/api/jobs_test.py` | Read-only API behind `/jobs-test`: list, and one record with its description |
 | `html/jobs_test.html` | The parsed listings with a detail drawer, served at `/jobs-test` |
+| `app/integrations/listing_pages/`, `app/services/listing_fetch.py`, `scripts/fetch_listings.py` | Experimental: request a collected link and store the posting's block (what a hand copy would be) in `job_listings_test`, 1-3 s random pause between requests; every platform with a parser (ADR-0023) |
 | `html/workspace.html` | Raw listings form and list, served at `/workspace` |
 | `html/_topbar.html` | Section switch (Jobs / Workspace) and per-section nav, injected into every page by `main.py:render_page` |
 | `app/workflows/` | DBOS workflows/steps; registers the `llm` and `job-ingest` queues |
@@ -179,6 +180,14 @@ stored exactly as pasted) and `created_at`/`updated_at`. Not yet linked to
 
 Same columns, indexes and key as `jobs`, written by the listing parsers instead
 (ADR-0014); not read by the board. The vocabulary links are not copied.
+
+### Workspace: `job_listings_test`
+
+Experimental twin of `raw_job_listings` (ADR-0023): `url` (unique), `html_body`
+(the posting's block - cut out of the page, or rebuilt from the JSON an app-style page embeds; empty when nothing usable came back), `status` (`fetched`,
+`not_found`, `blocked`, `no_content`, `unsupported`, `error`), `http_status`,
+`page_bytes` (the whole response, for comparison), `note`, `fetched_at`. Written by
+`scripts/fetch_listings.py`; nothing reads it yet.
 
 ### Workspace: `manual_job_listing_urls`
 

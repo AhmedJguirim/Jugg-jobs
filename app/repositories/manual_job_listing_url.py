@@ -6,7 +6,7 @@ Same contract as the other repositories: explicit `Session`, `flush()` but never
 
 from typing import Sequence
 
-from sqlalchemy import exists, func, select, update
+from sqlalchemy import exists, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -84,9 +84,25 @@ def next_unprocessed(session: Session, skip: int = 0) -> ManualJobListingUrl | N
     return session.scalars(statement).first()
 
 
-def count_unprocessed(session: Session) -> int:
+def _on_hosts(hosts: Sequence[str]):
+    """Links on one of these hosts (a subdomain counts: `breezy.hr` matches `acme.breezy.hr`)."""
+    return or_(*(ManualJobListingUrl.url.ilike(f"%{host}/%") for host in hosts))
+
+
+def count_unprocessed(session: Session, hosts: Sequence[str] | None = None) -> int:
     statement = select(func.count()).select_from(ManualJobListingUrl).where(_unprocessed(), _live())
+    if hosts is not None:
+        statement = statement.where(_on_hosts(hosts))
     return session.scalar(statement) or 0
+
+
+def unprocessed_urls(session: Session, limit: int, hosts: Sequence[str] | None = None) -> list[str]:
+    """Live links with no stored raw listing, oldest first; with `hosts`, only
+    those on one of them."""
+    statement = select(ManualJobListingUrl.url).where(_unprocessed(), _live())
+    if hosts is not None:
+        statement = statement.where(_on_hosts(hosts))
+    return list(session.scalars(statement.order_by(ManualJobListingUrl.id).limit(limit)))
 
 
 def processed_urls(session: Session, urls: Sequence[str]) -> set[str]:

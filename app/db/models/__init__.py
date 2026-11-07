@@ -9,6 +9,7 @@ from app.db.base import Base
 from app.db.models.company import Company
 from app.db.models.enrichment import JobAssessment, JobTranslation
 from app.db.models.job import Job
+from app.db.models.job_listing_test import JobListingTest
 from app.db.models.job_test import JobTest
 from app.db.models.location import Location
 from app.db.models.manual_job_listing_url import ManualJobListingUrl
@@ -35,6 +36,7 @@ __all__ = [
     "Industry",
     "Job",
     "JobAssessment",
+    "JobListingTest",
     "JobTest",
     "JobTranslation",
     "Location",
