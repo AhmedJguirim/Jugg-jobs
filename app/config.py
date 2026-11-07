@@ -23,8 +23,8 @@ class Settings(BaseSettings):
     postgres_password: str = Field(default="postgres")
     postgres_host: str = Field(default="localhost")
     postgres_port: int = Field(default=5432)
-    postgres_db: str = Field(default="job_hunt")
-    postgres_test_db: str = Field(default="job_hunt_test")
+    postgres_db: str = Field(default="jugg_jobs")
+    postgres_test_db: str = Field(default="jugg_jobs_test")
 
     # Set DATABASE_URL to override the assembled URL entirely (e.g. in CI).
     database_url: str | None = Field(default=None)

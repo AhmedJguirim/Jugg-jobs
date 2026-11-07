@@ -1,4 +1,4 @@
-# job-hunt
+# Jugg Jobs
 
 A job search tool that runs on your own machine. You give it links to job
 postings on Ashby, Lever, Greenhouse, Workable and Breezy HR. It fetches each
@@ -50,8 +50,8 @@ Linux/macOS, use `.venv/bin/python` instead of `.venv\Scripts\python.exe`.
 ## Setup
 
 ```shell
-git clone https://github.com/AhmedJguirim/job-hunt.git
-cd job-hunt
+git clone https://github.com/AhmedJguirim/jugg-jobs.git
+cd jugg-jobs
 
 python -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements.txt
@@ -63,7 +63,7 @@ values have working defaults.
 Create the database and the schema:
 
 ```shell
-psql -U postgres -c "CREATE DATABASE job_hunt;"
+psql -U postgres -c "CREATE DATABASE jugg_jobs;"
 .venv\Scripts\python.exe -m alembic upgrade head
 ```
 
@@ -218,7 +218,7 @@ systems (Teamtailor, Recruitee, Personio, ...) are the most useful addition.
 
 Before you open a PR:
 
-- **Run the tests.** They need PostgreSQL and a `job_hunt_test` database (they
+- **Run the tests.** They need PostgreSQL and a `jugg_jobs_test` database (they
   skip cleanly without it):
 
   ```shell

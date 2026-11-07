@@ -5,7 +5,7 @@ describes; record *why* a decision was made in `docs/adr/` and link it here.
 
 ## What this application is
 
-A job search tool that runs on one machine. It collects links to postings on
+Jugg Jobs is a job search tool that runs on one machine. It collects links to postings on
 Ashby, Lever, Greenhouse, Workable and Breezy HR, fetches each posting, grades it
 against a candidate profile with a small local model (`qwen3.5:4b` on Ollama), and
 shows the result on a board sorted by fit, with eligibility reported separately.
@@ -243,7 +243,7 @@ stops everything. Symptom: listings waiting, no GPU activity, no errors.
 
 | Suite | Command | Needs |
 |---|---|---|
-| Unit | `pytest tests/unit -q` | PostgreSQL (`job_hunt_test`) |
+| Unit | `pytest tests/unit -q` | PostgreSQL (`jugg_jobs_test`) |
 | E2E | `pytest -m e2e -q` | the app on :8000 (started if not running) + Chromium |
 
 Unit tests run against real PostgreSQL rather than SQLite, because the

@@ -17,7 +17,7 @@ from app import logging_setup
 from app.api import board_router, workspace_router
 from app.workflows import listing_fetch, listing_grading, llm_queue
 
-app = FastAPI(title="job-hunt")
+app = FastAPI(title="Jugg Jobs")
 config: DBOSConfig = {
     "name": "dbos-app-starter",
     # Unset: DBOS keeps its own state in a SQLite file next to this one.

@@ -1,4 +1,4 @@
-# Running it
+# Running Jugg Jobs
 
 What to start, what each page does, and what to do when something looks stuck.
 Setup is in the [README](../README.md). Commands are run from the project root;

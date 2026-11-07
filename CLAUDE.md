@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A job search tool. It collects links to postings on Ashby, Lever, Greenhouse,
+Jugg Jobs, a job search tool. It collects links to postings on Ashby, Lever, Greenhouse,
 Workable and Breezy HR (pasted Google results), fetches each posting, and grades
 it against a candidate profile with a **local** LLM (`qwen3.5:4b` via Ollama).
 DBOS provides durable workflows; PostgreSQL holds everything.
@@ -38,7 +38,7 @@ different interpreter without the project's packages.
 .venv\Scripts\python.exe -m alembic upgrade head
 ```
 
-Unit tests need PostgreSQL (`job_hunt_test`); they skip cleanly without it. No
+Unit tests need PostgreSQL (`jugg_jobs_test`); they skip cleanly without it. No
 unit test makes a network request or calls the model. Grading needs Ollama
 running. There is no linter or formatter configured.
 

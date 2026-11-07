@@ -72,7 +72,7 @@ class TestApi:
 
 class TestPage:
     def test_page_loads_with_a_title(self, board: Page):
-        expect(board).to_have_title("Job board - job-hunt")
+        expect(board).to_have_title("Job board - Jugg Jobs")
 
     def test_heading_is_visible(self, board: Page):
         expect(board.get_by_role("heading", name="Job board")).to_be_visible()
