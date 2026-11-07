@@ -251,3 +251,7 @@ Before you open a PR:
 [`CLAUDE.md`](CLAUDE.md) has the same rules in more detail, plus the gotchas
 that tend to cost people an afternoon. It is written for AI coding assistants,
 but it's worth reading even if you don't use one.
+
+## License
+
+MIT - see [LICENSE](LICENSE).
