@@ -3,7 +3,7 @@
     python scripts/process_listing.py 2                  # one raw_job_listings id
     python scripts/process_listing.py 1 2 3              # several, one workflow each
     python scripts/process_listing.py --all              # every stored listing
-    python scripts/process_listing.py 2 --profile ahmed --force
+    python scripts/process_listing.py 2 --profile default --force
 
 Each id runs `process_listing_workflow`: detect the platform from the url, parse
 the page, grade it against the profile on the local model, and only then create

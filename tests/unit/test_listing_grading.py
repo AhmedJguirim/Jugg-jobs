@@ -72,9 +72,9 @@ class TestPrepare:
         assert prepared["job_id"] is None and prepared["current"] is False
 
     def test_the_profile_defaults_to_the_configured_one(self, session, job_payload, monkeypatch):
-        monkeypatch.setattr(grading, "get_settings", lambda: type("S", (), {"llm_default_profile": "ahmed"})())
+        monkeypatch.setattr(grading, "get_settings", lambda: type("S", (), {"llm_default_profile": "default"})())
 
-        assert grading.prepare(job_payload, None, session)["profile_name"] == "ahmed"
+        assert grading.prepare(job_payload, None, session)["profile_name"] == "default"
 
     def test_long_text_is_capped(self, session, job_payload):
         job_payload["description"] = "<p>" + ("PHP developer needed for the team. " * 2000) + "</p>"

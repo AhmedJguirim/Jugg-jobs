@@ -11,6 +11,12 @@
     "Data Engineer"
   ],
   "seniority": ["mid", "senior"],
+  "education": {
+    "_comment": "Dutch adverts state a level: MBO (vocational), HBO (university of applied sciences, ~bachelor), WO (research university, bachelor/master). List the levels your degree meets.",
+    "highest_level": "Bachelor's degree (Computer Science)",
+    "meets_dutch_levels": ["MBO", "HBO"],
+    "field": "computer science"
+  },
   "strong_skills": [
     "Python",
     "FastAPI",
@@ -54,7 +60,7 @@
   },
   "dealbreakers": [
     "requires fluent or business-level Dutch",
-    "requires a professional qualification the candidate does not hold (e.g. nursing registration, BIG registration)",
+    "requires a licensed profession the candidate is not registered for (e.g. nursing/BIG, medical, legal bar)",
     "unpaid or commission-only"
   ]
 }

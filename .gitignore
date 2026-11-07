@@ -174,3 +174,15 @@ test-results/
 
 # DBOS system databases created by scripts and ad-hoc runs
 *.sqlite
+
+# Runtime output: dev.log rotates into dev.log.N, and the command audit trail
+# (tools/cmdlog.py) is a local record, not project history.
+logs/
+
+# Candidate profiles hold a CV's worth of personal detail. Only the template is
+# shared; copy it to profiles/<you>.json and set LLM_DEFAULT_PROFILE.
+profiles/*.json
+!profiles/default.json
+
+# Personal search notes
+scraping targets.txt

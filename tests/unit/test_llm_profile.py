@@ -71,7 +71,7 @@ class TestPromptRendering:
         qualification the candidate lacks - it flagged that on 343 of 546
         assessments for someone holding a master's.
         """
-        text = load_profile("ahmed").as_prompt_text()
+        text = load_profile("default").as_prompt_text()
 
         assert "Highest education:" in text
         assert "Meets Dutch education levels:" in text
@@ -82,7 +82,7 @@ class TestPromptRendering:
 
     def test_dealbreakers_name_licences_not_education_levels(self):
         """"Professional qualification" was being read as any stated level."""
-        dealbreakers = " ".join(load_profile("ahmed").dealbreakers).lower()
+        dealbreakers = " ".join(load_profile("default").dealbreakers).lower()
 
         assert "licensed profession" in dealbreakers
         assert "hbo" not in dealbreakers
