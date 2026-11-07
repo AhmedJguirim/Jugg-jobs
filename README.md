@@ -6,6 +6,9 @@ posting and grades it against your CV with a small local language model. You end
 up with one board, sorted by how well each job fits you, that tells you
 separately whether you can actually get the job.
 
+## Dev note
+I have been using this app i made (with claude) to help me filter jobs before applying. It has proven useful to me so i thought of sharing it with whoever is interested. I made this app to save me time because reading hundreds of job applications each day is really time consuming. I heavily relied on claude for this app without much review from my part since it is purely for personal use so there might be flaws here and there. This app doesn't apply for you, it doesn't update your CV or write you a cover letter, but it assists you in knowing what jobs are for you and what jobs aren't fairly accurately while also explaining why. Use this app safely and responsibly and feel free to contribute if you want, or email me with suggestions.
+
 ## Why you might want it
 
 - **Searching job boards is noisy.** A search for "backend developer remote"
