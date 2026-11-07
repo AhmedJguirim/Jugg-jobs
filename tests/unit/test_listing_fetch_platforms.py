@@ -13,7 +13,6 @@ from app.integrations.listing_pages.client import Page
 from app.parsers import ListingNotFound, ParsedListing
 from app.parsers.greenhouse import parse as parse_greenhouse
 from app.parsers.workable import parse as parse_workable
-from app.repositories import job_listing_test as repo
 from app.services import listing_fetch
 from app.text.dom import parse_html
 from tests.unit.test_listing_fetch import asked_for, cut, served
@@ -62,18 +61,18 @@ class TestGreenhouse:
 
         outcome = listing_fetch.fetch_listing(GH_URL, fetch=fetch)
 
-        assert (outcome["status"], outcome["http_status"]) == (repo.NOT_FOUND, 200)
+        assert (outcome["status"], outcome["http_status"]) == (listing_fetch.NOT_FOUND, 200)
         assert isinstance(parse_greenhouse(GH_URL, outcome["html_body"]), ListingNotFound)
 
     def test_a_page_with_no_job_and_no_error_redirect_is_no_content(self):
         outcome = listing_fetch.fetch_listing(GH_URL, fetch=served(200, "<html><body>hi</body></html>"))
 
-        assert outcome["status"] == repo.NO_CONTENT
+        assert outcome["status"] == listing_fetch.NO_CONTENT
 
     def test_a_fetched_job_is_stored(self):
         outcome = listing_fetch.fetch_listing(GH_URL, fetch=served(200, greenhouse_response()))
 
-        assert outcome["status"] == repo.FETCHED and "job__description" in outcome["html_body"]
+        assert outcome["status"] == listing_fetch.FETCHED and "job__description" in outcome["html_body"]
 
 
 def workable_get(log=None, account_status=200, job_status=200):
@@ -108,7 +107,7 @@ class TestWorkable:
 
         outcome = listing_fetch.fetch_listing(WK_URL, fetch=workable_get(log))
 
-        assert outcome["status"] == repo.FETCHED
+        assert outcome["status"] == listing_fetch.FETCHED
         assert log == [(WK_JOB_API, True), (WK_ACCOUNT_API, True)]
 
     def test_the_parser_reads_the_rebuilt_block(self):
@@ -149,7 +148,7 @@ class TestWorkable:
 
         outcome = listing_fetch.fetch_listing("https://apply.workable.com/j/617A4D5C9F", fetch=workable_get(log))
 
-        assert outcome["status"] == repo.FETCHED
+        assert outcome["status"] == listing_fetch.FETCHED
         assert [url for url, _ in log][:2] == ["https://apply.workable.com/j/617A4D5C9F", WK_JOB_API]
 
     def test_the_application_form_link_asks_for_the_job(self):
@@ -161,19 +160,19 @@ class TestWorkable:
     def test_a_removed_job_is_a_404_the_parser_reads_as_gone(self):
         outcome = listing_fetch.fetch_listing(WK_URL, fetch=workable_get(job_status=404))
 
-        assert (outcome["status"], outcome["http_status"]) == (repo.NOT_FOUND, 404)
+        assert (outcome["status"], outcome["http_status"]) == (listing_fetch.NOT_FOUND, 404)
         assert isinstance(parse_workable(WK_URL, outcome["html_body"]), ListingNotFound)
 
     def test_without_the_company_the_job_is_still_stored_just_unnamed(self):
         outcome = listing_fetch.fetch_listing(WK_URL, fetch=workable_get(account_status=500))
 
-        assert outcome["status"] == repo.FETCHED
+        assert outcome["status"] == listing_fetch.FETCHED
         assert parse_workable(WK_URL, outcome["html_body"]).job.company_name is None
 
     def test_a_refused_job_request_is_blocked(self):
         outcome = listing_fetch.fetch_listing(WK_URL, fetch=workable_get(job_status=429))
 
-        assert outcome["status"] == repo.BLOCKED
+        assert outcome["status"] == listing_fetch.BLOCKED
 
     def test_the_shell_the_page_serves_has_nothing_the_parser_reads(self):
         shell = (FIXTURES / "workable" / "total_life_server_shell.html").read_text(encoding="utf-8")

@@ -3,9 +3,9 @@
 Separated from `main.py` so the HTTP surface for the UI has one home and
 `main.py` stays the entrypoint plus workflow wiring.
 
-Shape of the contract: `/api/board` returns the whole enriched corpus *without*
-the long description bodies, small enough (68 rows today) for the page to filter
-and sort client-side with no round trips. The bodies are fetched per vacancy from
+Shape of the contract: `/api/board` returns every graded posting *without* the
+long description bodies, small enough for the page to filter and sort
+client-side with no round trips. The bodies are fetched per posting from
 `/api/jobs/{id}` when one is opened, which keeps the list payload light while the
 detail stays instant enough.
 
@@ -41,34 +41,20 @@ def _job_row(job: Job, assessment: Optional[JobAssessment], translation: Optiona
     return {
         "id": job.id,
         "title": (translation.title if translation else None) or job.title,
-        "title_original": job.title,
-        "retitled": bool(translation and translation.title and translation.title != job.title),
         "company": job.company.name if job.company else None,
         "city": job.location.city if job.location else None,
         "province": job.location.province if job.location else None,
         "salary": job.salary_range,
-        "hours": (
-            f"{job.working_hours_min}-{job.working_hours_max}"
-            if job.working_hours_min is not None
-            else None
-        ),
         "posted": job.start_date.isoformat() if job.start_date else None,
-        "career_level": job.career_level,
-        "dco_title": job.dco_title,
-        "education": [term.name for term in job.education_levels],
         "contract": [term.name for term in job.contract_types],
-        "categories": [term.name for term in job.categories],
         "url": job.detail_url,
         "applied_at": job.applied_at.isoformat() if job.applied_at else None,
         "archived_at": job.archived_at.isoformat() if job.archived_at else None,
-        "translated": bool(translation and not translation.skipped),
-        "source_language": translation.source_language if translation else None,
-        # Enrichment. Absent until the vacancy has been through the GPU queue.
+        # The grade. Absent only for a job graded under another profile.
         "assessed": assessment is not None,
         "fit_score": assessment.fit_score if assessment else None,
         "verdict": assessment.verdict if assessment else None,
         "blocked": bool(assessment.blocked) if assessment else False,
-        "dutch_required": bool(assessment.dutch_required) if assessment else False,
         "sponsorship_required": bool(assessment.sponsorship_required) if assessment else False,
         "eligibility": (assessment.eligibility if assessment else None) or "unknown",
         "location_policy": assessment.location_policy if assessment else None,
@@ -130,7 +116,6 @@ def board(profile: str | None = None) -> dict[str, Any]:
             "blocked": sum(1 for r in jobs if r["blocked"]),
             "applied": sum(1 for r in jobs if r["applied_at"]),
             "archived": sum(1 for r in jobs if r["archived_at"]),
-            "needs_dutch": sum(1 for r in jobs if r["dutch_required"]),
         "needs_sponsorship": sum(1 for r in jobs if r["sponsorship_required"]),
         "eligibility": {
             tier: sum(1 for r in jobs if r["eligibility"] == tier)
@@ -179,10 +164,10 @@ def update_marks(job_id: int, marks: MarksUpdate) -> dict[str, Any]:
 
 @router.get("/api/jobs/{job_id}")
 def job_detail(job_id: int, profile: str | None = None) -> dict[str, Any]:
-    """One vacancy including both texts: the English translation and the original.
+    """One posting including its description.
 
-    The original is returned sanitised rather than raw, because that is what the
-    model actually read - useful when a translation looks wrong.
+    `description_en` is the cleaned text the grade was made from;
+    `description_original` is the stored description, sanitised the same way.
 
     `profile` defaults to the configured one, as for `/api/board`. Without that
     default the detail came back with no assessment (nothing matches a NULL
@@ -225,7 +210,6 @@ def job_detail(job_id: int, profile: str | None = None) -> dict[str, Any]:
                      + (assessment.duration_ms if assessment else 0)) / 1000,
                     1,
                 ),
-                "chunks": translation.chunks if translation else 0,
             }
         )
         return detail

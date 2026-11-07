@@ -1,12 +1,17 @@
-"""Translation and assessment on the local model.
+"""Scoring rules shared by every grade: what is decided in code, not by the model.
 
-This layer owns *how* to use the model well: chunking, skipping work that is
-already correct, validating what comes back, and repairing it once before giving
-up. It never decides *when* to run - that is the workflow's job, and the reason
-this module stays free of DBOS.
+A 4B model is asked only for judgement. Anything checkable is computed here:
 
-Every call here occupies the GPU, so every caller must be inside the `llm`
-queue (ADR-0007).
+- the **stack tier** (`classify_stack`), which fixes the score band;
+- whether a quoted **permit requirement** really appears in the advert and is
+  really about the right to work (`_evidence_is_real`);
+- the candidate's **work authorisation**, read from the profile
+  (`_profile_has_eu_authorization`);
+- the JSON the model returns, which is parsed tolerantly, repaired once if
+  needed, and coerced into range field by field (`_parse_assessment`).
+
+The grader that calls the model is `app/llm/global_grader.py`. This module never
+calls it, so everything here is testable without a GPU.
 """
 
 from __future__ import annotations
@@ -16,19 +21,9 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from app.config import get_settings
-from app.integrations.ollama import LlmResult, chat
+from app.llm.global_prompts import GLOBAL_ASSESSMENT_PROMPT_VERSION
 from app.llm.profile import CandidateProfile
-from app.llm.prompts import (
-    ASSESSMENT_PROMPT_VERSION,
-    TRANSLATION_PROMPT_VERSION,
-    assessment_messages,
-    json_repair_messages,
-    title_translation_messages,
-    translation_messages,
-)
 from app.logging_setup import log
-from app.text import chunk_text
 
 VERDICTS = {"strong_match", "possible", "weak", "irrelevant"}
 SENIORITIES = {"intern", "junior", "mid", "senior", "lead", "unknown"}
@@ -48,25 +43,7 @@ SENIORITY_FITS = {"under_qualified", "good", "over_qualified", "unknown"}
 # Small models sometimes wrap output in fences or a preamble despite being told
 # not to; strip that rather than discarding an otherwise good answer.
 _FENCE = re.compile(r"^\s*```(?:json|text)?\s*|\s*```\s*$", re.IGNORECASE)
-_PREAMBLE = re.compile(
-    r"^\s*(here (?:is|'s) (?:the )?(?:translation|english translation|json)|"
-    r"translation|english)\s*[:\-]\s*",
-    re.IGNORECASE,
-)
-
-
-@dataclass
-class TranslationResult:
-    text: str
-    title: Optional[str] = None
-    model: str = ""
-    prompt_version: str = TRANSLATION_PROMPT_VERSION
-    chunks: int = 0
-    prompt_tokens: int = 0
-    output_tokens: int = 0
-    duration_s: float = 0.0
-    skipped: bool = False
-    skip_reason: Optional[str] = None
+_PREAMBLE = re.compile(r"^\s*(here (?:is|'s) (?:the )?json)\s*[:\-]\s*", re.IGNORECASE)
 
 
 @dataclass
@@ -74,10 +51,12 @@ class AssessmentResult:
     fit_score: int
     verdict: str
     seniority: str = "unknown"
-    # Which tier of the candidate's skills the vacancy's primary stack sits in;
+    # Which tier of the candidate's skills the posting's primary stack sits in;
     # this is what anchors fit_score to a band (ADR-0008).
     stack_match: str = "unrelated"
     seniority_fit: str = "unknown"
+    # A Dutch-language requirement. The column predates the other languages,
+    # which are reported as red flags.
     dutch_required: bool = False
     sponsorship_required: bool = False
     blocked: bool = False
@@ -93,7 +72,7 @@ class AssessmentResult:
     red_flags: list[str] = field(default_factory=list)
     reasoning: str = ""
     model: str = ""
-    prompt_version: str = ASSESSMENT_PROMPT_VERSION
+    prompt_version: str = GLOBAL_ASSESSMENT_PROMPT_VERSION
     profile_name: str = "default"
     prompt_tokens: int = 0
     output_tokens: int = 0
@@ -104,7 +83,6 @@ class AssessmentResult:
 def _clean_output(value: str) -> str:
     value = _FENCE.sub("", value.strip())
     return _PREAMBLE.sub("", value).strip()
-
 
 
 # ---------------------------------------------------------------------------
@@ -237,93 +215,7 @@ def classify_stack(
 
 
 # ---------------------------------------------------------------------------
-# Translation
-# ---------------------------------------------------------------------------
-
-
-def translate_text(
-    text: str,
-    *,
-    source_language: str = "nl",
-    chunk_chars: Optional[int] = None,
-    model: Optional[str] = None,
-) -> TranslationResult:
-    """Translate cleaned vacancy text to English, chunk by chunk.
-
-    Long descriptions are split because a 4B model handed 10k characters starts
-    summarising instead of translating. Chunks are translated independently and
-    rejoined, which also means a failure costs one chunk, not the document.
-    """
-    settings = get_settings()
-    chunk_chars = chunk_chars or settings.llm_chunk_chars
-
-    if not text.strip():
-        return TranslationResult(text="", skipped=True, skip_reason="empty text")
-    if source_language == "en":
-        return TranslationResult(
-            text=text, skipped=True, skip_reason="already English", chunks=0
-        )
-
-    chunks = chunk_text(text, max_chars=chunk_chars)
-    translated: list[str] = []
-    prompt_tokens = output_tokens = 0
-    duration = 0.0
-    used_model = ""
-
-    for index, chunk in enumerate(chunks, start=1):
-        result: LlmResult = chat(
-            translation_messages(chunk),
-            model=model,
-            temperature=0.2,
-            think=False,
-            # Allow room for English to run longer than Dutch without truncating.
-            num_predict=int(len(chunk) / 2) + 512,
-        )
-        translated.append(_clean_output(result.content))
-        prompt_tokens += result.prompt_tokens
-        output_tokens += result.output_tokens
-        duration += result.duration_s
-        used_model = result.model
-        log.info(
-            "translated chunk %s/%s (%s chars -> %s tokens, %.1fs)",
-            index,
-            len(chunks),
-            len(chunk),
-            result.output_tokens,
-            result.duration_s,
-        )
-
-    return TranslationResult(
-        text="\n\n".join(part for part in translated if part).strip(),
-        model=used_model,
-        chunks=len(chunks),
-        prompt_tokens=prompt_tokens,
-        output_tokens=output_tokens,
-        duration_s=duration,
-    )
-
-
-def translate_title(title: str, *, source_language: str = "nl", model: Optional[str] = None) -> str:
-    """Translate a job title. Cheap enough to do in one call."""
-    if not title.strip() or source_language == "en":
-        return title
-    result = chat(
-        title_translation_messages(title),
-        model=model,
-        temperature=0.1,
-        think=False,
-        num_predict=64,
-    )
-    # A small model occasionally editorialises; fall back to the original rather
-    # than storing a sentence where a title belongs.
-    cleaned = _clean_output(result.content).splitlines()[0].strip().strip('"') if result.content else ""
-    if not cleaned or len(cleaned) > max(120, len(title) * 3):
-        return title
-    return cleaned
-
-
-# ---------------------------------------------------------------------------
-# Assessment
+# Reading the model's answer
 # ---------------------------------------------------------------------------
 
 
@@ -487,169 +379,3 @@ def _parse_assessment(payload: str) -> dict:
         return salvaged
 
     raise AssessmentUnparseable("no JSON object in model output")
-
-
-def assess_job(
-    *,
-    title: str,
-    description: str,
-    profile: CandidateProfile,
-    company: Optional[str] = None,
-    location: Optional[str] = None,
-    salary: Optional[str] = None,
-    contract: Optional[str] = None,
-    education: Optional[str] = None,
-    model: Optional[str] = None,
-) -> AssessmentResult:
-    """Score one vacancy against a profile and return a validated result.
-
-    Output is constrained with Ollama's JSON mode; if it still will not parse,
-    the model is given one repair attempt before we give up. Every field is
-    coerced into range rather than trusted, so a hallucinated verdict cannot
-    reach the database.
-    """
-    # The tier is a lookup, not a judgement call, so it is computed here and
-    # handed to the model as a fact. The model's job is to place the score
-    # inside that band - see classify_stack.
-    stack_match, matched_skills = classify_stack(title, description, profile)
-    low, high = STACK_BANDS[stack_match]
-
-    messages = assessment_messages(
-        title=title,
-        company=company,
-        location=location,
-        salary=salary,
-        contract=contract,
-        education=education,
-        description=description,
-        profile_text=profile.as_prompt_text(),
-        stack_match=stack_match,
-        matched_skills=matched_skills,
-        band=(low, high),
-    )
-
-    result = chat(
-        messages,
-        model=model,
-        temperature=0.1,
-        think=False,
-        json_format=True,
-        # Generous: a verbose assessment truncated at 700 tokens produced
-        # unparseable JSON on one real vacancy, and the repair inherited the same
-        # cap and truncated in turn.
-        num_predict=1400,
-    )
-
-    repaired = False
-    truncated = result.output_tokens and result.output_tokens >= 1400
-    try:
-        data = _parse_assessment(result.content)
-    except (ValueError, json.JSONDecodeError):
-        log.warning(
-            "assessment JSON unparseable%s, attempting one repair",
-            " (output hit the token ceiling)" if truncated else "",
-        )
-        repair = chat(
-            json_repair_messages(result.content),
-            model=model,
-            temperature=0.0,
-            think=False,
-            json_format=True,
-            num_predict=1400,
-        )
-        data = _parse_assessment(repair.content)
-        repaired = True
-        result.prompt_tokens += repair.prompt_tokens
-        result.output_tokens += repair.output_tokens
-        result.duration_s += repair.duration_s
-
-    try:
-        score = int(float(data.get("fit_score", 0)))
-    except (TypeError, ValueError):
-        score = 0
-    # Clamp into the band the tier dictates: a small model will occasionally
-    # ignore the range it was given, and the tier is the more trustworthy signal.
-    score = max(low, min(high, max(0, min(100, score))))
-
-    verdict = _coerce_choice(data.get("verdict"), VERDICTS, _score_to_verdict(score))
-    remote = _coerce_choice(data.get("remote"), REMOTE_VALUES, "unknown")
-    dutch_required = bool(data.get("dutch_required", False))
-
-    # Work authorisation is a rule, not a judgement, so it is applied here.
-    # The model claimed one on-site internship needed no sponsorship because
-    # "the candidate is eligible for remote work" - which the vacancy never
-    # said; its own `remote` field was "unknown". On a Dutch job board, a role
-    # that is not explicitly fully remote is in the Netherlands, and a candidate
-    # without an EU permit needs sponsorship for it. Anything but a confirmed
-    # remote role therefore requires sponsorship.
-    needs_permit = not _profile_has_eu_authorization(profile)
-    location_policy = _coerce_choice(
-        data.get("location_policy"), LOCATION_POLICIES, "unknown"
-    )
-    # Only an explicit statement counts, and only one we can find in the text:
-    # the model claimed this for adverts that never mentioned permits.
-    claimed_permit = bool(data.get("requires_existing_permit", False))
-    permit_evidence = str(data.get("permit_evidence") or "")
-    requires_existing_permit = claimed_permit and _evidence_is_real(
-        permit_evidence, description
-    )
-    if claimed_permit and not requires_existing_permit:
-        log.info(
-            "ignoring an unevidenced permit requirement; the quoted sentence "
-            "is not in the advert: %r",
-            permit_evidence[:80],
-        )
-    offers_sponsorship = bool(data.get("offers_sponsorship", False))
-
-    # Doable from outside the EU, so no permit question arises at all.
-    remote_from_anywhere = location_policy == "remote_worldwide" or remote == "remote"
-
-    # Hard blocks first, and they apply whatever the candidate's permit status:
-    # a Dutch-language requirement rules out someone who does not read Dutch
-    # whether or not they may legally work here. Checking permits first meant
-    # the language requirement was silently skipped for an authorised profile.
-    hard_blocked = (
-        dutch_required
-        or requires_existing_permit
-        or bool(data.get("blocked", False))
-    )
-
-    if hard_blocked:
-        eligibility = ELIGIBILITY_BLOCKED
-    elif remote_from_anywhere:
-        eligibility = ELIGIBILITY_REMOTE_OK
-    else:
-        # Reachable: the candidate is willing to relocate, and sponsorship is a
-        # conversation rather than a closed door. For a candidate who already
-        # holds the right to work, this simply means "on site".
-        eligibility = ELIGIBILITY_RELOCATION
-
-    sponsorship_required = needs_permit and not remote_from_anywhere
-    blocked = eligibility == ELIGIBILITY_BLOCKED
-
-    return AssessmentResult(
-        fit_score=score,
-        verdict=verdict,
-        seniority=_coerce_choice(data.get("seniority"), SENIORITIES, "unknown"),
-        stack_match=stack_match,
-        seniority_fit=_coerce_choice(data.get("seniority_fit"), SENIORITY_FITS, "unknown"),
-        dutch_required=dutch_required,
-        sponsorship_required=sponsorship_required,
-        blocked=blocked,
-        eligibility=eligibility,
-        location_policy=location_policy,
-        requires_existing_permit=requires_existing_permit,
-        offers_sponsorship=offers_sponsorship,
-        remote=remote,
-        summary=str(data.get("summary") or "").strip()[:2000],
-        matched_requirements=_coerce_list(data.get("matched_requirements")),
-        missing_requirements=_coerce_list(data.get("missing_requirements")),
-        red_flags=_coerce_list(data.get("red_flags")),
-        reasoning=str(data.get("reasoning") or "").strip()[:2000],
-        model=result.model,
-        profile_name=profile.name,
-        prompt_tokens=result.prompt_tokens,
-        output_tokens=result.output_tokens,
-        duration_s=result.duration_s,
-        repaired=repaired,
-    )

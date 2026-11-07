@@ -1,9 +1,12 @@
-"""CRUD for LLM-derived data, plus the queries that decide what needs the GPU.
+"""CRUD for what the model produced: grades, and the cleaned text they were made from.
 
-The `pending_*` functions are the important part: at ~16s of GPU time per
-vacancy, the cheapest optimisation is not running the model at all. A job needs
-work only when it has no result, or when the result was produced from different
-source text or an older prompt version.
+`assessment_is_current` is the GPU's off switch: at tens of seconds of GPU time
+per posting, the cheapest optimisation is not running the model at all. A posting
+is graded again only when its cleaned text or the prompt version changed.
+
+`job_translations` holds the cleaned English text the grade was made from (the
+board's detail drawer shows it). The table and its name predate this project's
+worldwide focus, when it held machine translations of Dutch vacancies.
 
 Same contract as the other repositories: explicit `Session`, `flush()` but never
 `commit()`.
@@ -11,11 +14,11 @@ Same contract as the other repositories: explicit `Session`, `flush()` but never
 
 from typing import Optional, Sequence
 
-from sqlalchemy import Select, and_, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db.models.enrichment import JobAssessment, JobTranslation
-from app.db.models.job import SOURCE_NVB, Job
+from app.db.models.job import Job
 
 
 class EnrichmentRepositoryError(Exception):
@@ -82,63 +85,6 @@ def upsert_translation(
 
     session.flush()
     return translation
-
-
-def _needs_translation_clause(prompt_version: Optional[str], target_language: str):
-    """A job needs translating when no row exists, the hash moved, or the prompt aged."""
-    existing = select(JobTranslation).where(
-        JobTranslation.job_id == Job.id,
-        JobTranslation.target_language == target_language,
-    )
-    fresh_conditions = [JobTranslation.job_id == Job.id]
-    if prompt_version:
-        fresh_conditions.append(JobTranslation.prompt_version == prompt_version)
-    return ~existing.where(and_(*fresh_conditions)).exists()
-
-
-def pending_translation(
-    session: Session,
-    *,
-    target_language: str = "en",
-    prompt_version: Optional[str] = None,
-    limit: int = 100,
-    only_with_description: bool = True,
-) -> Sequence[Job]:
-    """Jobs with no current translation, oldest postings first.
-
-    Staleness from a changed description is detected by the caller, which knows
-    the freshly computed hash; this query covers "never done" and "done by an
-    older prompt".
-    """
-    query = select(Job).where(
-        _needs_translation_clause(prompt_version, target_language),
-        # Only Nationale Vacaturebank vacancies use this (Dutch) pipeline;
-        # other sources are graded when they are created (ADR-0015).
-        Job.source == SOURCE_NVB,
-    )
-    if only_with_description:
-        query = query.where(Job.description.is_not(None))
-    query = query.order_by(Job.start_date.desc().nullslast(), Job.id).limit(limit)
-    return session.scalars(query).unique().all()
-
-
-def translation_is_current(
-    translation: Optional[JobTranslation],
-    *,
-    source_hash: str,
-    prompt_version: str,
-) -> bool:
-    """True when a stored translation still matches the text and the prompt.
-
-    This is the GPU's off switch: re-ingesting a vacancy whose text did not
-    change must not re-run the model.
-    """
-    if translation is None:
-        return False
-    return (
-        translation.source_hash == source_hash
-        and translation.prompt_version == prompt_version
-    )
 
 
 # ---- assessments ----
@@ -229,33 +175,6 @@ def upsert_assessment(
     return assessment
 
 
-def pending_assessment(
-    session: Session,
-    *,
-    profile_name: str = "default",
-    prompt_version: Optional[str] = None,
-    limit: int = 100,
-    only_with_description: bool = True,
-) -> Sequence[Job]:
-    """Jobs not yet scored against this profile (or scored by an older prompt)."""
-    existing = select(JobAssessment).where(
-        JobAssessment.job_id == Job.id,
-        JobAssessment.profile_name == profile_name,
-    )
-    conditions = [JobAssessment.job_id == Job.id]
-    if prompt_version:
-        conditions.append(JobAssessment.prompt_version == prompt_version)
-
-    query = select(Job).where(
-        ~existing.where(and_(*conditions)).exists(),
-        Job.source == SOURCE_NVB,  # see pending_translation
-    )
-    if only_with_description:
-        query = query.where(Job.description.is_not(None))
-    query = query.order_by(Job.start_date.desc().nullslast(), Job.id).limit(limit)
-    return session.scalars(query).unique().all()
-
-
 def assessment_is_current(
     assessment: Optional[JobAssessment],
     *,
@@ -273,52 +192,8 @@ def assessment_is_current(
 # ---- reading the results ----
 
 
-def shortlist(
-    session: Session,
-    *,
-    profile_name: str = "default",
-    min_score: int = 55,
-    include_blocked: bool = False,
-    limit: int = 25,
-    offset: int = 0,
-) -> Sequence[tuple[Job, JobAssessment, Optional[JobTranslation]]]:
-    """The point of the whole pipeline: best-fitting vacancies, in English.
-
-    `include_blocked=False` hides vacancies that hit a dealbreaker (such as
-    requiring fluent Dutch) while leaving their fit score intact, so turning the
-    flag on shows the good roles that are out of reach rather than pretending
-    they scored badly.
-    """
-    query = (
-        select(Job, JobAssessment, JobTranslation)
-        .join(JobAssessment, JobAssessment.job_id == Job.id)
-        .outerjoin(
-            JobTranslation,
-            and_(
-                JobTranslation.job_id == Job.id,
-                JobTranslation.target_language == "en",
-            ),
-        )
-        .where(
-            JobAssessment.profile_name == profile_name,
-            JobAssessment.fit_score >= min_score,
-        )
-    )
-    if not include_blocked:
-        query = query.where(JobAssessment.blocked.is_(False))
-
-    query = (
-        query.order_by(JobAssessment.fit_score.desc(), Job.start_date.desc().nullslast())
-        .limit(limit)
-        .offset(offset)
-    )
-    return [tuple(row) for row in session.execute(query).unique().all()]
-
-
 def enrichment_progress(session: Session, *, profile_name: str = "default") -> dict:
-    """Counts for a progress report: how much of the corpus is done."""
-    from sqlalchemy import func
-
+    """Counts for a progress report: how much of the corpus is graded."""
     total = session.scalar(
         select(func.count()).select_from(Job).where(Job.description.is_not(None))
     ) or 0

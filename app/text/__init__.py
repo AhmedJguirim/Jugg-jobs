@@ -1,8 +1,7 @@
-"""Text preparation: HTML sanitising, language detection, chunking."""
+"""Text preparation: HTML sanitising and language detection."""
 
 from app.text.sanitize import (
     CleanedText,
-    chunk_text,
     content_hash,
     detect_language,
     sanitize_description,
@@ -10,7 +9,6 @@ from app.text.sanitize import (
 
 __all__ = [
     "CleanedText",
-    "chunk_text",
     "content_hash",
     "detect_language",
     "sanitize_description",

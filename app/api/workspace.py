@@ -23,7 +23,7 @@ from app.services import listing_fetch as fetching
 from app.services import listing_progress
 from app.workflows import listing_fetch as fetch_flow
 from app.workflows import listing_grading as grading_flow
-from app.workflows.enrichment import STAGE_EVENT
+from app.workflows.llm_queue import STAGE_EVENT
 
 router = APIRouter(tags=["workspace"])
 
@@ -58,8 +58,7 @@ def submit_raw_job_listing(body: RawJobListingIn):
         raise HTTPException(status_code=422, detail="url and html_body must not be blank")
     # Saving only stores. Grading is a separate, deliberate step (the Grade
     # button or a batch), because it takes the GPU for minutes. A url on a site
-    # with no parser - Nationale Vacaturebank included, which has its own
-    # pipeline - can never be graded here, so it is marked and never listed.
+    # with no parser can never be graded, so it is marked and never listed.
     status = None if detect_platform(body.url.strip()) else repo.UNSUPPORTED
     with session_scope() as session:
         listing = repo.create(

@@ -1,7 +1,6 @@
-"""Grade a vacancy from any country against a candidate profile.
+"""Grade a job posting from any country against a candidate profile.
 
-Counterpart of `service.assess_job` for sources that are not the Dutch job
-board (ADR-0015). Same split of work, same reason (ADR-0008):
+The split of work (ADR-0008, ADR-0015):
 
 - **The model reports, with quotes.** Where the role may be done, which
   languages it needs, whether it demands a nationality or a clearance, whether it
@@ -12,11 +11,8 @@ board (ADR-0015). Same split of work, same reason (ADR-0008):
   they speak, the country they live in, the nationality they hold. The 4B model
   once "quoted" an office address as proof a permit was required; checking the
   quote in code is what stops that kind of inference reaching the database.
-- **The stack tier is code too** (`service.classify_stack`), and clamps the score
-  into its band exactly as for Dutch vacancies.
-
-Nothing in `service.py` or `prompts.py` is changed or bypassed for NVB vacancies;
-this module only imports from them.
+- **The stack tier is code too** (`scoring.classify_stack`), and the score is
+  clamped into that tier's band.
 """
 
 from __future__ import annotations
@@ -27,10 +23,13 @@ from typing import Any, Optional
 
 from app.integrations.ollama import chat
 from app.llm import geo
-from app.llm.global_prompts import GLOBAL_ASSESSMENT_PROMPT_VERSION, global_assessment_messages
+from app.llm.global_prompts import (
+    GLOBAL_ASSESSMENT_PROMPT_VERSION,
+    global_assessment_messages,
+    json_repair_messages,
+)
 from app.llm.profile import CandidateProfile
-from app.llm.prompts import json_repair_messages
-from app.llm.service import (
+from app.llm.scoring import (
     ELIGIBILITY_BLOCKED,
     ELIGIBILITY_RELOCATION,
     ELIGIBILITY_REMOTE_OK,
@@ -127,8 +126,7 @@ def candidate_citizenships(profile: CandidateProfile) -> set[str]:
 
 
 def profile_text(profile: CandidateProfile) -> str:
-    """The profile as labelled lines, without the Dutch-specific wording of
-    `CandidateProfile.as_prompt_text` ("Meets Dutch education levels")."""
+    """The profile as labelled lines, the form a 4B model reads best."""
     spoken, absent = profile._language_line()
     location = profile.location or {}
     education = profile.education or {}

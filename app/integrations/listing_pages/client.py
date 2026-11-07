@@ -4,8 +4,8 @@ Posting pages on the platforms we parse need no login and no cookies: one plain
 GET answers (a browser's `cf_clearance` / `__cf_bm` are not sent). Only the
 headers a browser sends for a link followed from a search result are.
 
-Pure integration code like the NVB client: it performs the request and returns
-what came back, and holds no database or DBOS concepts.
+Pure integration code: it performs the request and returns what came back, and
+holds no database or DBOS concepts.
 """
 
 from __future__ import annotations

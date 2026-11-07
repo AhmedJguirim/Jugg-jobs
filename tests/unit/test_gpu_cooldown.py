@@ -8,7 +8,7 @@ import pytest
 from dbos import DBOS
 
 from app.integrations.gpu import temperature as gpu
-from app.workflows import enrichment as flow
+from app.workflows import llm_queue as flow
 
 
 class TestParseTemperature:

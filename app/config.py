@@ -23,8 +23,8 @@ class Settings(BaseSettings):
     postgres_password: str = Field(default="postgres")
     postgres_host: str = Field(default="localhost")
     postgres_port: int = Field(default=5432)
-    postgres_db: str = Field(default="nljobs")
-    postgres_test_db: str = Field(default="nljobs_test")
+    postgres_db: str = Field(default="job_hunt")
+    postgres_test_db: str = Field(default="job_hunt_test")
 
     # Set DATABASE_URL to override the assembled URL entirely (e.g. in CI).
     database_url: str | None = Field(default=None)
@@ -38,16 +38,13 @@ class Settings(BaseSettings):
     # concurrency of 1, not by these settings. See ADR-0007.
     ollama_base_url: str = Field(default="http://localhost:11434")
     llm_model: str = Field(default="qwen3.5:4b")
-    # Generous: a cold model load plus a long chunk can take minutes.
+    # Generous: a cold model load plus a long posting can take minutes.
     llm_timeout_seconds: float = Field(default=600.0)
-    # 8192 comfortably fits the largest cleaned description chunk plus its
-    # translation; the model supports far more but larger contexts cost VRAM.
+    # 8192 comfortably fits a long cleaned posting, the profile and the reply;
+    # the model supports far more but larger contexts cost VRAM.
     llm_num_ctx: int = Field(default=8192)
     # Keep the model resident between queued jobs so each one does not reload it.
     llm_keep_alive: str = Field(default="10m")
-    # Chunk size for translation; small enough that a 4B model translates
-    # rather than summarises.
-    llm_chunk_chars: int = Field(default=3000)
     # Which scoring profile to use when none is named.
     llm_default_profile: str = Field(default="default")
 

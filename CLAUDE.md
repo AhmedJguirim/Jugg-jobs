@@ -4,43 +4,43 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A job-hunting tool for the Dutch market. It scrapes vacancies from Nationale
-Vacaturebank, translates the Dutch ones to English with a **local** LLM
-(`qwen3.5:4b` via Ollama), and grades each one against a candidate profile.
+A job search tool. It collects links to postings on Ashby, Lever, Greenhouse,
+Workable and Breezy HR (pasted Google results), fetches each posting, and grades
+it against a candidate profile with a **local** LLM (`qwen3.5:4b` via Ollama).
 DBOS provides durable workflows; PostgreSQL holds everything.
 
-`exec.md` is the operator runbook (how to start and use it).
-`docs/architecture.md` is the design overview, and `docs/adr/` records why each
-decision was made — read the relevant ADR before changing a decision it covers.
+`README.md` is setup and usage, `docs/operations.md` the runbook,
+`docs/architecture.md` the design overview, and `docs/adr/` records why each
+decision was made - read the relevant ADR before changing a decision it covers.
 
 ## Commands
 
-Use `.venv\Scripts\python.exe`, never a bare `python` — the latter is a
+On Windows use `.venv\Scripts\python.exe`, never a bare `python` - that may be a
 different interpreter without the project's packages.
 
 ```shell
 :: tests
-.venv\Scripts\python.exe -m pytest -q                       :: all (~2 min, starts the app itself)
-.venv\Scripts\python.exe -m pytest -m "not e2e" -q          :: unit only, no browser
-.venv\Scripts\python.exe -m pytest tests/unit/test_llm_service.py -q
+.venv\Scripts\python.exe -m pytest tests/unit -q            :: unit only, no browser
+.venv\Scripts\python.exe -m pytest -q                       :: all (starts the app if it is not running)
+.venv\Scripts\python.exe -m pytest tests/unit/test_global_grader.py -q
 .venv\Scripts\python.exe -m pytest "tests/unit/test_stack_classification.py::TestTierSelection::test_familiar_stack" -q
 
-:: run the app (serves /board, /companies)
+:: run the app (http://localhost:8000)
 .venv\Scripts\python.exe main.py
 
-:: pipeline
-.venv\Scripts\python.exe scripts\ingest_jobs.py "Laravel" "Symfony"
-.venv\Scripts\python.exe scripts\enrich_jobs.py --profile ahmed
-.venv\Scripts\python.exe scripts\enrich_jobs.py --progress --profile ahmed
-.venv\Scripts\python.exe scripts\enrich_jobs.py --clear-stuck     :: unwedge the llm queue
+:: grade stored raw listings from the command line
+.venv\Scripts\python.exe scripts\process_listing.py --all --profile default
+:: unwedge the llm queue (app stopped)
+.venv\Scripts\python.exe scripts\clear_stuck.py
 
 :: migrations
 .venv\Scripts\python.exe -m alembic revision --autogenerate -m "what changed"
 .venv\Scripts\python.exe -m alembic upgrade head
 ```
 
-Tests need PostgreSQL (`nljobs_test`); they skip cleanly without it. Enrichment
-needs Ollama running. There is no linter or formatter configured.
+Unit tests need PostgreSQL (`job_hunt_test`); they skip cleanly without it. No
+unit test makes a network request or calls the model. Grading needs Ollama
+running. There is no linter or formatter configured.
 
 ## Architecture
 
@@ -49,8 +49,8 @@ needs Ollama running. There is no linter or formatter configured.
 Dependencies point one way only:
 
 ```
-main.py                    FastAPI routes + DBOS wiring
-app/api/                   read-only HTTP for the two pages
+main.py                    page routes + DBOS launch
+app/api/                   HTTP for the pages (workspace, board)
 app/workflows/             DBOS workflows, steps, queue registration
 app/services/              flows: order multiple repository/client calls
 app/repositories/          ALL SQL lives here; no query construction elsewhere
@@ -60,109 +60,115 @@ app/config.py              settings from .env
 ```
 
 Repositories take an explicit `Session`, call `flush()` but **never `commit()`**
-— transaction boundaries belong to the caller — and raise domain errors
-(`CompanyNotFound`, `DuplicateJob`) rather than leaking `IntegrityError`.
+- transaction boundaries belong to the caller - and raise domain errors
+(`JobNotFound`, `RawJobListingNotFound`) rather than leaking `IntegrityError`.
 
-### The GPU constraint — the central design fact
+### The flow
+
+```
+paste Google results -> manual_job_listing_urls      (/workspace/urls)
+  "Process all"      -> raw_job_listings             listing-fetch queue, 1 at a time
+  Grade / Bulk grade -> parse -> prepare -> grade -> persist
+                                            (llm queue)  -> jobs + job_assessments
+```
+
+Fetching never grades, and saving HTML never grades: grading is on demand, one
+listing or a batch of up to 100 (ADR-0016, ADR-0024). Nothing reaches `jobs`
+until it has a grade (ADR-0015).
+
+### The GPU constraint - the central design fact
 
 There is one GPU and one model. **Every LLM call goes through the `llm` DBOS
-queue**, registered with `worker_concurrency=1` *and* `global_concurrency=1`.
-`app/integrations/ollama/client.py` is the only code that occupies the GPU and
-does not serialise itself; calling it outside a queued workflow breaks the
-guarantee, which is why scripts enqueue rather than invoke.
+queue** (`app/workflows/llm_queue.py`), registered with `worker_concurrency=1`
+*and* `global_concurrency=1`. `app/integrations/ollama/client.py` is the only code
+that occupies the GPU and does not serialise itself; calling it outside a queued
+workflow breaks the guarantee, which is why scripts enqueue rather than invoke.
 
-Page fetching is network-bound and runs on a separate `job-ingest` queue.
-Batch company scrapes run on `company-scrape` (two at a time) and report
-progress through DBOS workflow events (`progress`, `stage`) - ADR-0010.
+Fetching runs on `listing-fetch` (one at a time, 1-3 s random pause between
+requests) and grading batches on `listing-grade` (two at a time). They report
+progress through DBOS workflow events (`progress`, `stage`).
 
-Before each vacancy's GPU work, `enrich_job_workflow` checks the temperature
+Before each grade, `grade_listing_workflow` checks the temperature
 (`nvidia-smi`) and sleeps 3 min while it is above 80°C (`GPU_*` settings,
-ADR-0011).
-
-Three caps bound what one click can cost (`app/workflows/enrichment.py`):
-20 pages walked, 50 *new* vacancies stored, 50 vacancies sent to the GPU.
+ADR-0011). Without `nvidia-smi` it never pauses.
 
 ### Decide in code what a 4B model cannot be trusted to decide
 
 This pattern recurs and is the main lesson of the codebase. The model is asked
-only for judgement; anything checkable is computed:
+only for judgement; anything checkable is computed (`app/llm/scoring.py`,
+`app/llm/global_grader.py`):
 
-- **Stack tier** (`service.classify_stack`) — a weighted keyword match, not the
-  model's opinion. It repeatedly called a Python vacancy "unrelated" on a
+- **Stack tier** (`scoring.classify_stack`) - a weighted keyword match, not the
+  model's opinion. It repeatedly called a Python posting "unrelated" on a
   profile listing Python under `familiar`.
-- **Eligibility tier** — derived from evidence. A permit claim counts only when
-  the model quotes a sentence that *appears in the advert* **and** contains
-  right-to-work language; it once "quoted" `"Laravel developer wanted for our
-  Utrecht office."` as proof a permit was required.
-- **Work authorisation** — a rule over the profile, not a model inference.
-
-### Enrichment pipeline
-
-```
-prepare_text (no GPU)  ->  translate_step (GPU)  ->  assess_step (GPU)  ->  persist
-```
-
-Each vacancy is one queued child workflow, so a crash resumes rather than
-repeating paid-for GPU work. Translation is persisted **before** grading: it is
-the expensive half, and grading can fail on its own.
-
-Nothing re-runs unnecessarily: `job_translations` and `job_assessments` carry
-`source_hash` (of the *cleaned* text) and `prompt_version`. Unchanged text with
-the same prompt version is skipped entirely. **Bump the prompt version in
-`app/llm/prompts.py` when you change a prompt** — that is what marks existing
-rows stale.
+- **Restrictions** (a language, a country, a permit, a nationality) count only
+  when the model quotes a sentence that *appears in the advert* **and** says what
+  the claim needs. It once "quoted" a real sentence that said nothing about
+  permits as proof a permit was required.
+- **Whether a restriction bars this candidate** - a lookup against the profile
+  (languages, `based_in`, `citizenship`, `work_authorization`), not a model
+  inference.
 
 ### Scoring model
 
 `fit_score` rates the work only, banded by stack tier (core 75-95, proficient
 55-75, familiar 30-55, unrelated 10-30, non-technical 0-10) and clamped into
 that band. Eligibility is reported separately as a traffic light:
-`blocked` / `relocation` / `remote_ok`. Never fold eligibility into the score —
+`blocked` / `relocation` / `remote_ok`. Never fold eligibility into the score -
 that conflation was the original bug and ADR-0008 explains it.
 
-Profiles live in `profiles/<name>.json`; `LLM_DEFAULT_PROFILE` picks one.
+Nothing is graded twice unnecessarily: `job_assessments` carries `source_hash`
+(of the *cleaned* text) and `prompt_version`. **Bump
+`GLOBAL_ASSESSMENT_PROMPT_VERSION` in `app/llm/global_prompts.py` when you change
+a prompt** - that is what marks existing grades stale.
+
+Profiles live in `profiles/<name>.json`; `LLM_DEFAULT_PROFILE` picks one. Only
+`profiles/default.json` (an example) is tracked; real ones are git-ignored.
 Assessments are keyed `(job_id, profile_name)`, so profiles never mix.
 
-## Vacancies from other sources
+### Adding a platform
 
-Listings from Ashby and future platforms are parsed (`app/parsers/`), graded by
-`app/llm/global_grader.py` (not `service.assess_job`) and only then created
-(`process_listing_workflow`). The Dutch pipeline above is for `source == "nvb"`
-only and is fenced off from the rest in the pending queries and
-`enrich_job_workflow`; do not widen it. Grading is on demand (a Grade button or a
-bulk batch of up to 100), never a side effect of saving HTML. See ADR-0015/0016.
-The *Process all* button on `/workspace/urls` fetches the pages of collected links and
-puts them on that waiting list (still no grading): ADR-0023/0024.
+A parser in `app/parsers/<platform>.py` (pure: url + HTML -> `ParsedListing` /
+`ListingNotFound`, raising `ListingParseError` for markup it does not know), its
+host in `PLATFORM_HOSTS`, the element to keep in
+`app/integrations/listing_pages/extract.py`, and real pages under
+`tests/fixtures/<platform>/` with tests that parse them.
 
 ## Gotchas that will cost you time
 
-- **`register_queues()` must be called AFTER `DBOS.launch()`** — it writes to
+- **`register_queues()` must be called AFTER `DBOS.launch()`** - it writes to
   the system database and raises otherwise.
-- **Bump `APPLICATION_VERSION` in `app/workflows/enrichment.py` when a
+- **Bump `APPLICATION_VERSION` in `app/workflows/llm_queue.py` when a
   workflow's step sequence changes** (a `DBOS.set_event` counts as a step).
-  `main.py` and `enrich_jobs.py` both read it. DBOS replays recovered
+  `main.py` and `scripts/process_listing.py` both read it. DBOS replays recovered
   workflows against current code and aborts with `DBOSUnexpectedStepError`
-  when recorded steps no longer line up.
+  when recorded steps no longer line up. Renaming a workflow or step function
+  changes the sequence too.
 - **A version bump can wedge the queue.** DBOS only recovers workflows of the
   current version, so a job left `PENDING` by the old one holds the single `llm`
-  slot forever and nothing runs again. `enrich_jobs.py --clear-stuck` fixes it
-  for the CLI's own workflows only: the app and the CLI use different SQLite
-  system databases (`dbos_app_starter.sqlite` vs `job_hunt_enrich.sqlite`).
-  Symptom: work pending, zero GPU activity, no errors.
-- **Get-or-create runs inside a SAVEPOINT** (`app/repositories/job.py`). Pages
-  ingest in parallel and race to create the same company/location/vocabulary
-  term. Plain SELECT-then-INSERT deadlocks and violates unique constraints.
+  slot forever and nothing runs again. `scripts/clear_stuck.py` fixes it - with
+  the app stopped. Symptom: work pending, zero GPU activity, no errors.
+- **The DBOS app name is still `dbos-app-starter`** (main.py, clear_stuck.py).
+  With `DBOS_SYSTEM_DATABASE_URL` unset, DBOS keeps its state in a SQLite file
+  named after it; renaming it orphans every workflow in flight.
+- **Get-or-create runs inside a SAVEPOINT** (`app/repositories/job.py`).
+  Workers race to create the same company/location; plain SELECT-then-INSERT
+  deadlocks and violates unique constraints.
 - **The unit-test fixture drops and recreates the test schema** each session,
   because `create_all` will not alter an existing table.
-- **`store_page` writes through its own session** (`session_scope`), i.e. the
-  application database. Tests that exercise it must monkeypatch
-  `enrichment.session_scope` or they will pollute `nljobs`.
-- **Descriptions are double-encoded HTML** (`&amp;eacute;`), so
+- **Services that open their own session** (`session_scope`) write to the
+  application database. Their tests pass `open_session=` or monkeypatch it, or
+  they pollute the real data.
+- **Descriptions can be double-encoded HTML** (`&amp;eacute;`), so
   `app/text/sanitize.py` unescapes until stable. Never feed raw description
   text to the model.
 - Thinking mode is off deliberately: it cost 4547 tokens vs 163 for the same
-  translation. The model's own defaults (`temperature=1`,
-  `presence_penalty=1.5`) are overridden on every call.
+  output. The model's own defaults (`temperature=1`, `presence_penalty=1.5`)
+  are overridden on every call.
+- Some names are history from the retired Dutch pipeline (ADR-0025): the
+  `job_translations` table (it holds the cleaned text a grade was made from),
+  the `dutch_required` column, `jobs_test` / `job_listings_test` (kept, unused).
+  Leave them unless a migration is worth it.
 
 ## Conventions
 

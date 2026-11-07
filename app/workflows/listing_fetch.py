@@ -39,7 +39,7 @@ _queue_registered = False
 
 def register_queue() -> None:
     """Register the queue. Call AFTER `DBOS.launch()` (see
-    `enrichment.register_queues` for why). Idempotent.
+    `llm_queue.register_queues` for why). Idempotent.
 
     Both limits are one: `worker_concurrency` for this process, `global_concurrency`
     for any other process on the same system database.

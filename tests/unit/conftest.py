@@ -1,6 +1,6 @@
 """Fixtures for database unit tests.
 
-Tests run against a real PostgreSQL database (nljobs_test), not SQLite: the
+Tests run against a real PostgreSQL database (job_hunt_test), not SQLite: the
 repository uses PostgreSQL-specific features (ON CONFLICT, ILIKE) that SQLite
 would not exercise faithfully.
 

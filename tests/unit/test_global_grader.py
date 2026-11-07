@@ -15,7 +15,8 @@ from app.llm import geo, global_grader
 from app.llm.global_grader import assess_listing, decide, profile_text
 from app.llm.global_prompts import GLOBAL_ASSESSMENT_PROMPT_VERSION
 from app.llm.profile import CandidateProfile
-from app.llm.service import AssessmentUnparseable, LlmResult
+from app.integrations.ollama import LlmResult
+from app.llm.scoring import AssessmentUnparseable
 
 
 def make_profile(**overrides) -> CandidateProfile:

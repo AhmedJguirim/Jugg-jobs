@@ -11,7 +11,7 @@ What the real data needed (measured over the ingested corpus, 68 vacancies):
   focused parser beats a dependency.
 - **61 of 68 descriptions are double-encoded**: they contain `&amp;eacute;`, not
   `&eacute;`. One `html.unescape` pass leaves `d&aacute;t` in the text, which
-  the model then tries to translate. Hence `unescape_entities` loops.
+  the model then reads as a word. Hence `unescape_entities` loops.
 - **Boilerplate repeats**: the same short lines (job title, city, "40 hours per
   week") appear several times from the page's navigation and header blocks.
   Repeats are dropped so the model sees each fact once.
@@ -38,7 +38,7 @@ _DROP_CONTENT_TAGS = {"script", "style", "head", "noscript", "svg"}
 # a repeated job title) is all well under this, while a short sentence is not.
 _BOILERPLATE_MAX_LEN = 60
 
-# Lines this short carry no translatable meaning on their own.
+# Lines this short carry no meaning on their own.
 _MIN_LINE_LEN = 2
 
 # Stopwords that separate Dutch from English cheaply. Deliberately small and
@@ -133,8 +133,8 @@ def unescape_entities(value: str, *, max_passes: int = 3) -> str:
 def detect_language(text: str) -> str:
     """Classify text as "nl", "en" or "unknown" by stopword frequency.
 
-    Used to skip translating what is already English - the cheapest possible
-    saving, since it avoids the model entirely.
+    Recorded with the cleaned text, so the language a posting is written in
+    is known without asking the model.
     """
     dutch = len(_DUTCH_MARKERS.findall(text))
     english = len(_ENGLISH_MARKERS.findall(text))
@@ -151,8 +151,8 @@ def detect_language(text: str) -> str:
 def content_hash(text: str) -> str:
     """Stable fingerprint of cleaned text.
 
-    Enrichment is keyed on this: if a re-ingest leaves the description
-    unchanged, the stored translation is still valid and the GPU stays idle.
+    Grades are keyed on this: if a posting is fetched again with the same
+    description, the stored grade is still valid and the GPU stays idle.
     """
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
@@ -243,59 +243,3 @@ def sanitize_description(
         clean_chars=len(text),
         truncated=truncated,
     )
-
-
-def chunk_text(text: str, *, max_chars: int = 3000) -> list[str]:
-    """Split text into chunks that a small model can translate faithfully.
-
-    Splitting on blank lines first, then on single lines, keeps paragraphs and
-    list items intact. Long documents are chunked rather than truncated because
-    a 4B model handed 10k characters tends to summarise instead of translate.
-    """
-    if max_chars < 1:
-        raise ValueError("max_chars must be >= 1")
-    if not text.strip():
-        return []
-    if len(text) <= max_chars:
-        return [text]
-
-    chunks: list[str] = []
-    current: list[str] = []
-    size = 0
-
-    for block in _split_blocks(text, max_chars):
-        block_len = len(block) + 1
-        if size + block_len > max_chars and current:
-            chunks.append("\n".join(current).strip())
-            current, size = [], 0
-        current.append(block)
-        size += block_len
-
-    if current:
-        chunks.append("\n".join(current).strip())
-    return [chunk for chunk in chunks if chunk]
-
-
-def _split_blocks(text: str, max_chars: int) -> list[str]:
-    """Break text into units no larger than max_chars, splitting progressively."""
-    blocks: list[str] = []
-    for paragraph in text.split("\n"):
-        if len(paragraph) <= max_chars:
-            blocks.append(paragraph)
-            continue
-        # A single paragraph over the limit: split on sentence ends, then hard.
-        sentences = re.split(r"(?<=[.!?])\s+", paragraph)
-        buffer = ""
-        for sentence in sentences:
-            while len(sentence) > max_chars:
-                blocks.append(sentence[:max_chars])
-                sentence = sentence[max_chars:]
-            if len(buffer) + len(sentence) + 1 > max_chars:
-                if buffer:
-                    blocks.append(buffer.strip())
-                buffer = sentence
-            else:
-                buffer = f"{buffer} {sentence}".strip()
-        if buffer:
-            blocks.append(buffer.strip())
-    return blocks

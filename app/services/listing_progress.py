@@ -1,18 +1,39 @@
 """One readable line for a listing's grading run, and a batch's totals.
 
-Counterpart of `scrape_progress` for the workspace: a batch can run for hours
-(grading is one listing at a time on the GPU), so each listing shows what it is
-doing - "waiting for the GPU", "GPU at 85C - cooling down for 3 min" - and how it
-ended. DBOS-free, so it is testable without a runtime.
+A batch can run for hours (grading is one listing at a time on the GPU), so
+each listing shows what it is doing - "waiting for the GPU", "GPU at 85C -
+cooling down for 3 min" - and how it ended. DBOS-free, so it is testable
+without a runtime.
 """
 
 from __future__ import annotations
 
 from typing import Any, Optional
 
-from app.services.scrape_progress import state_of
-
 __all__ = ["state_of", "running_label", "finished_label", "batch_summary"]
+
+# DBOS workflow statuses, grouped by what they mean to the person watching.
+WAITING = {"ENQUEUED"}
+RUNNING = {"PENDING"}
+FINISHED = {"SUCCESS"}
+CANCELLED = {"CANCELLED"}
+
+
+def state_of(status: Optional[str]) -> str:
+    """Collapse a DBOS status into waiting / running / done / cancelled / failed.
+
+    None means the workflow does not exist yet: a batch creates its children a
+    moment after it starts, and a poll can land in between.
+    """
+    if status is None or status in WAITING:
+        return "waiting"
+    if status in RUNNING:
+        return "running"
+    if status in FINISHED:
+        return "done"
+    if status in CANCELLED:
+        return "cancelled"
+    return "failed"
 
 
 def running_label(grade_state: Optional[str], stage: Optional[str]) -> str:

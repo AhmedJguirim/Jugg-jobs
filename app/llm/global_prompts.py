@@ -1,17 +1,17 @@
-"""Prompt for grading a vacancy from anywhere in the world.
+"""Prompts for grading a job posting from anywhere in the world.
 
-The Dutch grader (`prompts.ASSESSMENT_SYSTEM`) assumes a Netherlands job board:
-its only language barrier is Dutch, its only permit question is the EU/NL one,
-and "Dutch education levels" are built in. A vacancy from a global board can
-instead need Mandarin, Russian citizenship, a security clearance, a particular
-time zone, or hiring only in three named countries. This prompt asks the model
-to *report* those facts, each with a quote from the advert; whether they bar the
+A posting can need Mandarin, a particular citizenship, a security clearance, a
+time zone, or hiring only in three named countries. The prompt asks the model to
+*report* those facts, each with a quote from the advert; whether they bar the
 candidate is decided in code (`global_grader.py`).
 
-Same discipline as the Dutch prompts - one job per call, hard output format,
-forbid the failure modes seen in practice - and one addition: every restriction
-must come with a verbatim quote, because a 4B model otherwise infers
-restrictions from how a job "feels" and the code can then check the quote.
+The discipline: one job per call, a hard output format, the failure modes seen
+in practice forbidden by name, and a verbatim quote for every restriction,
+because a 4B model otherwise infers restrictions from how a job "feels". The
+code then checks the quote.
+
+**Bump GLOBAL_ASSESSMENT_PROMPT_VERSION when you change a prompt**: it is what
+marks existing grades stale.
 """
 
 from __future__ import annotations
@@ -166,4 +166,19 @@ Return the JSON assessment now."""
     return [
         {"role": "system", "content": GLOBAL_ASSESSMENT_SYSTEM.format(schema=GLOBAL_SCHEMA_DESCRIPTION)},
         {"role": "user", "content": user},
+    ]
+
+
+# Sent as a follow-up when the first reply will not parse as the expected object.
+JSON_REPAIR_SYSTEM = """\
+You fix malformed JSON. The user sends text that was supposed to be a single \
+JSON object. Return only that JSON object, corrected and valid. Do not add \
+fields, do not explain, do not wrap it in code fences.\
+"""
+
+
+def json_repair_messages(broken: str) -> list[dict[str, str]]:
+    return [
+        {"role": "system", "content": JSON_REPAIR_SYSTEM},
+        {"role": "user", "content": broken},
     ]

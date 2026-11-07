@@ -3,20 +3,21 @@
 **GPU safety.** This is the only code in the project that occupies the GPU. It
 does not serialise itself - callers must go through the `llm` DBOS queue, which
 is registered with `global_concurrency=1` and `worker_concurrency=1`. See
-`app/workflows/enrichment.py` and ADR-0007. Calling these functions directly
+`app/workflows/llm_queue.py` and ADR-0007. Calling these functions directly
 from a script bypasses that guarantee, so scripts enqueue work instead.
 
 **Why the options are explicit.** `ollama show qwen3.5:4b` reports the model's
 own defaults as `temperature=1`, `presence_penalty=1.5` and thinking *on*.
 Those are wrong for this workload:
 
-- `temperature=1` invents wording in a translation; 0.2 keeps it faithful.
+- `temperature=1` invents wording; a low temperature keeps the output faithful
+  to the text it was given.
 - `presence_penalty=1.5` pushes the model away from repeating words it has
-  already used - in a translation that is exactly what you do want, so it is
-  zeroed.
+  already used - but quoting the advert verbatim is exactly what the grader
+  asks for, so it is zeroed.
 - thinking cost 4547 output tokens and 51s versus 163 tokens and 29s for the
-  same translation quality when measured on this corpus, so it is off by
-  default and opt-in per call.
+  same quality when measured on this corpus, so it is off by default and
+  opt-in per call.
 
 Every request therefore sends its options explicitly rather than inheriting the
 model's.

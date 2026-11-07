@@ -55,7 +55,7 @@
               <span class="text-fg-muted font-normal text-base ml-1" x-text="`· profile: ${profile}`"></span>
             </h1>
             <p class="text-sm text-fg-muted mt-1">
-              Dutch vacancies scraped, translated and graded by a local model.
+              Job postings graded against your profile by a local model.
             </p>
           </div>
           <div class="flex items-center gap-2">
@@ -74,7 +74,7 @@
       <div x-show="error" class="mb-6 rounded-lg border border-danger/50 bg-danger/10 px-4 py-3 text-sm">
         <strong class="text-danger">Could not load the board.</strong>
         <span x-text="error" class="text-fg-muted"></span>
-        <p class="text-fg-muted mt-1">Is the app running, and has the ingest been run yet?</p>
+        <p class="text-fg-muted mt-1">Is the app running, and can it reach PostgreSQL?</p>
       </div>
 
       <!-- ── Stats ──────────────────────────────────────────────────── -->
@@ -87,31 +87,9 @@
         </template>
       </section>
 
-      <!-- Enrichment progress: visible while the GPU queue still has work. -->
-      <section
-        x-show="stats.translation_pending > 0 || stats.assessment_pending > 0"
-        class="mb-6 rounded-lg border border-ink-border bg-ink-raised px-4 py-3"
-      >
-        <div class="flex items-center justify-between text-sm mb-2">
-          <span class="font-semibold">Enrichment in progress</span>
-          <span class="text-fg-muted tabular-nums"
-                x-text="`${stats.assessed}/${stats.jobs_with_description} graded · ${stats.gpu_seconds_spent}s GPU`"></span>
-        </div>
-        <div class="h-1.5 rounded-full bg-ink-border overflow-hidden">
-          <div
-            class="h-full bg-splice transition-all duration-500"
-            :style="`width: ${pct(stats.assessed, stats.jobs_with_description)}%`"
-          ></div>
-        </div>
-        <p class="text-xs text-fg-muted mt-2">
-          One vacancy at a time — the <code class="text-lily">llm</code> queue is pinned to a single
-          GPU job. Refresh to see new results.
-        </p>
-      </section>
-
       <!-- ── Filters ────────────────────────────────────────────────── -->
       <section class="rounded-lg border border-ink-border bg-ink-raised p-4 mb-6">
-        <div class="grid gap-4 lg:grid-cols-[minmax(0,2fr)_repeat(6,minmax(0,1fr))]">
+        <div class="grid gap-4 lg:grid-cols-[minmax(0,2fr)_repeat(5,minmax(0,1fr))]">
           <div>
             <label class="block text-[11px] uppercase tracking-wider text-fg-muted mb-1">Search</label>
             <input
@@ -149,16 +127,6 @@
             </select>
           </div>
           <div>
-            <label class="block text-[11px] uppercase tracking-wider text-fg-muted mb-1">Language</label>
-            <select x-model="filters.language" aria-label="Language"
-                    class="w-full bg-ink border border-ink-border rounded-md px-3 py-2 text-sm focus:outline-none focus:border-splice/70">
-              <option value="">Any language</option>
-              <template x-for="option in languageOptions" :key="option.value">
-                <option :value="option.value" x-text="option.label"></option>
-              </template>
-            </select>
-          </div>
-          <div>
             <label class="block text-[11px] uppercase tracking-wider text-fg-muted mb-1">Sort</label>
             <select x-model="filters.sort"
                     class="w-full bg-ink border border-ink-border rounded-md px-3 py-2 text-sm focus:outline-none focus:border-splice/70">
@@ -188,10 +156,6 @@
             </span>
           </label>
           <label class="flex items-center gap-2 cursor-pointer select-none">
-            <input type="checkbox" x-model="filters.hideDutch" class="accent-splice" />
-            <span>Hide "Dutch required"</span>
-          </label>
-          <label class="flex items-center gap-2 cursor-pointer select-none">
             <input type="checkbox" x-model="filters.onlyAssessed" class="accent-splice" />
             <span>Only graded</span>
           </label>
@@ -218,10 +182,11 @@
       <!-- ── Empty states ───────────────────────────────────────────── -->
       <div x-show="!loading && !jobs.length && !error"
            class="rounded-lg border border-dashed border-ink-border px-6 py-12 text-center">
-        <p class="font-semibold">Nothing ingested yet.</p>
+        <p class="font-semibold">Nothing graded yet.</p>
         <p class="text-sm text-fg-muted mt-1">
-          Run <code class="text-splice">python scripts/ingest_jobs.py "Odido"</code>, then
-          <code class="text-splice">python scripts/enrich_jobs.py</code>.
+          Paste a page of search results into <a href="/workspace/urls" class="text-splice underline underline-offset-2">Listing URLs</a>
+          and press <em>Process all</em>, then grade them on
+          <a href="/workspace" class="text-splice underline underline-offset-2">Raw listings</a>.
         </p>
       </div>
       <div x-show="!loading && jobs.length && !visible.length"
@@ -256,10 +221,6 @@
                         class="shrink-0 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border"
                         :class="eligibilityClass(job.eligibility)"
                         x-text="eligibilityLabel(job.eligibility)"></span>
-                  <span x-show="job.dutch_required"
-                        class="shrink-0 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border border-warn/50 text-warn">
-                    Dutch
-                  </span>
                   <span x-show="job.offers_sponsorship"
                         class="shrink-0 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border border-ok/60 text-ok">
                     sponsors
@@ -289,10 +250,6 @@
                 </p>
 
                 <p x-show="job.summary" class="text-sm mt-2 line-clamp-2 text-fg/90" x-text="job.summary"></p>
-
-                <!-- The original title, when translation changed it. -->
-                <p x-show="job.retitled" class="text-xs text-fg-muted mt-1.5 italic truncate"
-                   x-text="`originally: ${job.title_original}`"></p>
 
                 <div x-show="job.red_flags.length" class="flex flex-wrap gap-1.5 mt-2">
                   <template x-for="flag in job.red_flags.slice(0, 3)" :key="flag">
@@ -387,7 +344,7 @@
                 <div class="flex flex-wrap gap-2 mt-3">
                   <a x-show="selected.url" :href="selected.url" target="_blank" rel="noopener"
                      class="px-3 py-1.5 text-sm rounded-md bg-splice/15 border border-splice/50 text-splice hover:bg-splice/25 transition">
-                    Open vacancy ↗
+                    Open posting ↗
                   </a>
                   <a x-show="selected.apply_url" :href="selected.apply_url" target="_blank" rel="noopener"
                      class="px-3 py-1.5 text-sm rounded-md border border-ink-border hover:border-lily/60 hover:text-lily transition">
@@ -400,9 +357,6 @@
                   <button @click="toggleMark(selected, 'archived')"
                           class="px-3 py-1.5 text-sm rounded-md border border-ink-border hover:border-fg-muted transition"
                           x-text="selected.archived_at ? 'Unarchive' : 'Archive'"></button>
-                  <button @click="tab = tab === 'original' ? 'english' : 'original'"
-                          class="px-3 py-1.5 text-sm rounded-md border border-ink-border hover:border-cyan/60 hover:text-cyan transition"
-                          x-text="tab === 'english' ? 'Show Dutch original' : 'Show English'"></button>
                 </div>
               </div>
 
@@ -455,18 +409,11 @@
                 <!-- text -->
                 <section>
                   <div class="flex items-baseline justify-between mb-2">
-                    <h3 class="text-[11px] uppercase tracking-wider text-fg-muted"
-                        x-text="tab === 'english' ? 'Description (English)' : 'Description (original, as the model read it)'"></h3>
+                    <h3 class="text-[11px] uppercase tracking-wider text-fg-muted">Description, as the model read it</h3>
                     <span x-show="detailLoading" class="text-xs text-fg-muted">loading…</span>
                   </div>
-                  <div x-show="tab === 'english'">
-                    <p x-show="!selected.description_en && !detailLoading" class="text-sm text-fg-muted italic">
-                      Not translated yet — it is still in the GPU queue.
-                    </p>
-                    <div class="prose-vacancy text-sm text-fg/90" x-text="selected.description_en"></div>
-                  </div>
-                  <div x-show="tab === 'original'" class="prose-vacancy text-sm text-fg-muted"
-                       x-text="selected.description_original"></div>
+                  <div class="prose-vacancy text-sm text-fg/90"
+                       x-text="selected.description_en || selected.description_original"></div>
                 </section>
 
                 <!-- provenance -->
@@ -475,7 +422,6 @@
                   <p class="text-xs text-fg-muted">
                     Model <code class="text-lily" x-text="selected.model"></code> ·
                     <span x-text="`${selected.gpu_seconds}s GPU`"></span> ·
-                    <span x-text="`${selected.chunks} translation chunk(s)`"></span> ·
                     sanitised <span x-text="`${selected.original_chars} → ${selected.clean_chars} chars`"></span>
                   </p>
                 </section>
@@ -487,52 +433,8 @@
     </div>
 
     <script>
-      // The API's controlled vocabularies come back in Dutch. They are small,
-      // closed sets, so a static glossary beats another model call - and the
-      // point of this page is that you do not have to read Dutch.
-      const DUTCH_TERMS = {
-        // contract types
-        Vast: "Permanent",
-        Tijdelijk: "Temporary",
-        Freelance: "Freelance",
-        Vrijwilliger: "Volunteer",
-        Stage: "Internship",
-        Vakantiewerk: "Holiday work",
-        // career levels
-        Ervaren: "Experienced",
-        Starter: "Entry level",
-        // education levels: Dutch qualifications with no English equivalent,
-        // so they are annotated rather than translated.
-        WO: "WO (university)",
-        HBO: "HBO (university of applied sciences)",
-        MBO: "MBO (vocational)",
-        "VMBO/MAVO": "VMBO/MAVO (pre-vocational)",
-        "Lagere school": "Primary school",
-        // categories
-        "Automatisering/Internet": "IT & Internet",
-        "Medisch/Zorg": "Medical & Care",
-        "Administratief/Secretarieel": "Administrative",
-        "Commercieel/Verkoop": "Commercial & Sales",
-        "Design/Creatie/Journalistiek": "Design & Media",
-        "Productie/Uitvoerend": "Production",
-        Techniek: "Engineering",
-        Overig: "Other",
-        // language codes
-        nl: "Dutch",
-        en: "English",
-        unknown: "undetermined",
-      };
-
-      function en(term) {
-        return DUTCH_TERMS[term] || term;
-      }
-
-      function enList(terms) {
-        return (terms || []).map(en).join(", ");
-      }
-
       function eligibilityDetail(job) {
-        if (job.eligibility === "remote_ok") return "remote - doable from Tunisia";
+        if (job.eligibility === "remote_ok") return "remote - doable from where you are";
         if (job.eligibility === "blocked") {
           return job.requires_existing_permit
             ? "the advert requires an existing permit"
@@ -566,7 +468,6 @@
           error: "",
           selected: null,
           detailLoading: false,
-          tab: "english",
           // Pagination is client-side: the list is already in the browser (it is
           // filtered and sorted there), and the cost of 5000+ cards is the DOM.
           page: 0,
@@ -577,12 +478,8 @@
             city: "",
             sort: "fit",
             includeBlocked: true,
-            hideDutch: false,
             onlyAssessed: false,
             stack: "",
-            // The language the vacancy is written in: "nl", "en", ..., or
-            // "unknown" for one with no language recorded. "" is any.
-            language: "",
             // open | applied | archived | all
             marks: "open",
           },
@@ -597,24 +494,6 @@
             // Any change to a filter or the sort starts again at the first page.
             this.$watch("filters", () => { this.page = 0; });
             this.load();
-          },
-
-          // The languages that actually occur, with a count each, English and
-          // Dutch first; vacancies with none recorded are "Not stated".
-          get languageOptions() {
-            const names = { en: "English", nl: "Dutch", unknown: "Not stated" };
-            const counts = new Map();
-            for (const job of this.jobs) {
-              const key = job.source_language || "unknown";
-              counts.set(key, (counts.get(key) || 0) + 1);
-            }
-            const rank = (key) => ({ en: 0, nl: 1, unknown: 99 }[key] ?? 50);
-            return [...counts.entries()]
-              .sort((a, b) => rank(a[0]) - rank(b[0]) || a[0].localeCompare(b[0]))
-              .map(([value, count]) => ({
-                value,
-                label: `${names[value] || value.toUpperCase()} (${count})`,
-              }));
           },
 
           get pageCount() {
@@ -689,15 +568,13 @@
               if (f.marks === "archived" && !job.archived_at) return false;
               if (f.onlyAssessed && !job.assessed) return false;
               if (!f.includeBlocked && job.blocked) return false;
-              if (f.hideDutch && job.dutch_required) return false;
               if (f.city && job.city !== f.city) return false;
               if (f.stack && job.stack_match !== f.stack) return false;
-              if (f.language && (job.source_language || "unknown") !== f.language) return false;
               // Ungraded vacancies have no score; only filter them out once the
               // threshold is actually raised above zero.
               if (f.minScore > 0 && (job.fit_score ?? -1) < f.minScore) return false;
               if (needle) {
-                const haystack = [job.title, job.title_original, job.company, job.summary, job.city]
+                const haystack = [job.title, job.company, job.summary, job.city]
                   .filter(Boolean).join(" ").toLowerCase();
                 if (!haystack.includes(needle)) return false;
               }
@@ -715,7 +592,6 @@
           async open(job) {
             // Show the list row immediately, then fill in the long text.
             this.selected = { ...job, description_en: null, description_original: "" };
-            this.tab = "english";
             this.detailLoading = true;
             try {
               const response = await fetch(`/api/jobs/${job.id}`);
@@ -732,8 +608,7 @@
           reset() {
             this.filters = {
               q: "", minScore: 0, city: "", sort: "fit",
-              includeBlocked: true, hideDutch: false, onlyAssessed: false, stack: "",
-              language: "", marks: "open",
+              includeBlocked: true, onlyAssessed: false, stack: "", marks: "open",
             };
           },
 
@@ -842,14 +717,8 @@
               { label: "where", value: (job.location_policy || "not stated").replace(/_/g, " ") },
               { label: "work setup", value: job.remote || "unknown" },
               { label: "salary", value: job.salary || "not stated" },
-              { label: "hours", value: job.hours || "not stated" },
-              { label: "contract", value: enList(job.contract) || "not stated" },
-              { label: "education", value: enList(job.education) || "not stated" },
-              { label: "classified as", value: job.dco_title || "unclassified" },
-              { label: "field", value: enList(job.categories) || "unclassified" },
-              { label: "career level", value: en(job.career_level) || "not stated" },
+              { label: "contract", value: (job.contract || []).join(", ") || "not stated" },
               { label: "posted", value: job.posted || "unknown" },
-              { label: "source language", value: en(job.source_language) || "unknown" },
             ];
           },
         };

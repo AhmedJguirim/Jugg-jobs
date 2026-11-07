@@ -130,13 +130,18 @@ class TestProcessLink:
         assert LEVER not in url_repo.unprocessed_urls(links, 100, fetching.fetchable_hosts())
 
     def test_nothing_is_graded_or_created(self, links, scope):
-        from app.repositories import job_test as job_test_repo
+        from sqlalchemy import func, select
 
-        before = len(job_test_repo.list_all(links))
+        from app.db.models.job import Job
+
+        def jobs() -> int:
+            return links.scalar(select(func.count()).select_from(Job))
+
+        before = jobs()
 
         fetching.process_link(LEVER, fetch=served(), open_session=scope)
 
-        assert len(job_test_repo.list_all(links)) == before
+        assert jobs() == before
 
     def test_it_pauses_first_only_when_asked(self, scope):
         sleeps: list[float] = []

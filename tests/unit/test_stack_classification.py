@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 
 from app.llm.profile import CandidateProfile
-from app.llm.service import STACK_BANDS, classify_stack
+from app.llm.scoring import STACK_BANDS, classify_stack
 
 
 @pytest.fixture

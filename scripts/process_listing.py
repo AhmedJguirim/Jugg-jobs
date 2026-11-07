@@ -29,7 +29,7 @@ from dbos import DBOS, DBOSConfig  # noqa: E402
 from app.db.session import session_scope  # noqa: E402
 from app.integrations.ollama import health  # noqa: E402
 from app.repositories import raw_job_listing as raw_repo  # noqa: E402
-from app.workflows import enrichment as flow  # noqa: E402
+from app.workflows import llm_queue  # noqa: E402
 from app.workflows.listing_grading import process_listing_workflow, register_queue  # noqa: E402
 
 
@@ -57,12 +57,12 @@ def main() -> int:
     config: DBOSConfig = {
         "name": "job-hunt-listings",
         "system_database_url": os.environ.get("DBOS_SYSTEM_DATABASE_URL"),
-        "application_version": flow.APPLICATION_VERSION,
+        "application_version": llm_queue.APPLICATION_VERSION,
     }
     DBOS(config=config)
     DBOS.launch()
     # After launch: register_queue writes to the system database.
-    flow.register_queues()
+    llm_queue.register_queues()
     register_queue()
     try:
         for listing_id in ids:

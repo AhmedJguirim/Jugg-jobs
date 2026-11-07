@@ -9,7 +9,6 @@ from __future__ import annotations
 import pytest
 
 from app.text.sanitize import (
-    chunk_text,
     clean_lines,
     content_hash,
     detect_language,
@@ -162,58 +161,12 @@ class TestDetectLanguage:
         )
         assert detect_language(text) == "nl"
 
-    def test_is_used_to_skip_translation(self):
-        """The whole point: English text must be recognised so no GPU is spent."""
+    def test_english_text_is_recognised(self):
+        """Postings are mostly English; the language is recorded with the text."""
         result = sanitize_description("<p>We are hiring a backend engineer for our team.</p>")
 
         assert result.language == "en"
         assert result.is_dutch is False
-
-
-class TestChunkText:
-    def test_short_text_is_one_chunk(self):
-        assert chunk_text("short text", max_chars=100) == ["short text"]
-
-    def test_empty_text_yields_no_chunks(self):
-        assert chunk_text("") == []
-
-    def test_splits_long_text(self):
-        text = "\n".join(f"Line {i} with some content to take up space" for i in range(100))
-
-        chunks = chunk_text(text, max_chars=500)
-
-        assert len(chunks) > 1
-
-    def test_every_chunk_respects_the_limit(self):
-        text = "\n".join(f"Line {i} with some content to take up space" for i in range(100))
-
-        assert all(len(chunk) <= 500 for chunk in chunk_text(text, max_chars=500))
-
-    def test_no_content_is_lost(self):
-        text = "\n".join(f"Line {i}" for i in range(50))
-
-        rejoined = " ".join(chunk_text(text, max_chars=100))
-
-        for i in range(50):
-            assert f"Line {i}" in rejoined
-
-    def test_splits_a_single_oversized_paragraph(self):
-        sentences = " ".join(f"This is sentence number {i}." for i in range(60))
-
-        chunks = chunk_text(sentences, max_chars=200)
-
-        assert len(chunks) > 1
-        assert all(len(chunk) <= 200 for chunk in chunks)
-
-    def test_splits_text_with_no_sentence_breaks(self):
-        chunks = chunk_text("x" * 1000, max_chars=100)
-
-        assert all(len(chunk) <= 100 for chunk in chunks)
-        assert sum(len(chunk) for chunk in chunks) == 1000
-
-    def test_rejects_invalid_limit(self):
-        with pytest.raises(ValueError):
-            chunk_text("text", max_chars=0)
 
 
 def test_content_hash_is_hex_sha256():

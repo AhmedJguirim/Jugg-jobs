@@ -1,21 +1,22 @@
-"""The candidate profile a vacancy is scored against.
+"""The candidate profile a job posting is scored against.
 
 Profiles live in `profiles/<name>.json` so they are edited as data, not code, and
 so several can coexist. The profile name is stored on every assessment, which
 keeps scores produced under different profiles from being compared by accident.
 
-**Skills are tiered, not flat.** A vacancy built on a stack you use in
+**Skills are tiered, not flat.** A posting built on a stack you use in
 production every day is a different proposition from one built on a language you
 have only touched, even though both "match" a flat keyword list. `skills.core`,
-`skills.proficient` and `skills.familiar` drive the scoring bands in the
-assessment prompt - see `prompts.ASSESSMENT_SYSTEM` and ADR-0008.
+`skills.proficient` and `skills.familiar` decide the score band - see
+`scoring.classify_stack` and ADR-0008.
 
 **Eligibility is described separately from skill.** Where you are, what you are
 authorised to work as, and which languages you speak decide whether a role is
 *reachable*; they must not quietly drag down how well the work itself fits.
 
-`as_prompt_text()` renders the profile as compact labelled lines. A 4B model
-handles that far better than raw JSON, which it tends to echo back.
+The grader renders the profile as compact labelled lines
+(`global_grader.profile_text`): a 4B model handles that far better than raw
+JSON, which it tends to echo back.
 
 The older flat format (`strong_skills` / `familiar_skills`) still loads, so
 existing profiles keep working.
@@ -99,59 +100,6 @@ class CandidateProfile:
         if isinstance(absent, str):
             absent = [absent]
         return ("; ".join(spoken) or "unspecified", ", ".join(absent) or "none stated")
-
-    def as_prompt_text(self) -> str:
-        """Render the profile for the assessment prompt."""
-        spoken, absent = self._language_line()
-        location = self.location or {}
-
-        lines = [f"Headline: {self.headline or 'unspecified'}"]
-        if self.summary:
-            lines.append(f"Summary: {self.summary}")
-        if self.years_experience is not None:
-            lines.append(f"Years of professional experience: {self.years_experience}")
-
-        lines += [
-            f"Target seniority: {', '.join(self.seniority) or 'any'}",
-            f"Target roles: {', '.join(self.target_roles) or 'any'}",
-            "",
-            "SKILL TIERS (these decide the score band):",
-            f"  CORE - used in production, daily: {', '.join(self.core_skills) or 'unspecified'}",
-            f"  PROFICIENT - used and comfortable: {', '.join(self.proficient_skills) or 'none'}",
-            f"  FAMILIAR - touched only, not production depth: "
-            f"{', '.join(self.peripheral_skills) or 'none'}",
-        ]
-
-        education = self.education or {}
-        if education:
-            lines += [
-                f"Highest education: {education.get('highest_level', 'unspecified')}"
-                + (f" in {education['field']}" if education.get("field") else ""),
-                # Dutch adverts state a level rather than a degree, so the
-                # equivalence is spelled out: without it the model reads "HBO
-                # required" as a qualification the candidate lacks.
-                f"Meets Dutch education levels: {', '.join(education.get('meets_dutch_levels', [])) or 'unspecified'}",
-            ]
-
-        if self.differentiators:
-            lines.append(f"Particular strengths: {'; '.join(self.differentiators)}")
-        if self.domains:
-            lines.append(f"Domains worked in: {', '.join(self.domains)}")
-
-        lines += [
-            "",
-            "ELIGIBILITY (never lowers the fit score; report it separately):",
-            f"  Languages spoken: {spoken}",
-            f"  Languages NOT spoken: {absent}",
-            f"  Currently based in: {location.get('based_in', 'unspecified')}",
-            f"  Work authorisation: {location.get('work_authorization', 'unspecified')}",
-            f"  Relocation: {location.get('relocation', 'unspecified')}",
-            f"  Work arrangement: {location.get('remote_preference', 'no preference')}",
-            "",
-            f"Not interested in: {', '.join(self.not_interested_in) or 'nothing excluded'}",
-            f"Dealbreakers: {', '.join(self.dealbreakers) or 'none'}",
-        ]
-        return "\n".join(lines)
 
 
 @lru_cache

@@ -42,8 +42,8 @@ def parse_compensation(text: str) -> tuple[Optional[int], Optional[int], Optiona
     """`"EUR 55K - 72K"` -> (55000, 72000, "yearly"). Unreadable -> all None.
 
     Takes the first range in the text; a posting may list several tiers, and
-    the caller keeps the full sentence(s). `salary_type` uses the vocabulary
-    the NVB data already has: yearly / monthly / hourly / unspecified.
+    the caller keeps the full sentence(s). `salary_type` is one of
+    yearly / monthly / hourly / unspecified.
     """
     lowered = text.lower()
     if re.search(r"hour|/\s*hr\b|\bp\.?h\.?\b", lowered):

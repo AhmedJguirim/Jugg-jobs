@@ -3,8 +3,7 @@
     load -> parse -> [model available?] -> prepare -> grade (llm queue) -> persist
 
 Everything before `grade` is cheap and GPU-free. `grade` is its own workflow on
-the `llm` queue, so it shares the one GPU slot with the Dutch enrichment (and the
-temperature cooldown applies to it too). Nothing is written to `jobs` until a
+the single-slot `llm` queue, preceded by the GPU temperature cooldown. Nothing is written to `jobs` until a
 grade exists: if the model is down or its reply is unreadable the workflow ends
 with a status and stores nothing, and running it again is safe - `persist` is an
 upsert on (source, external_id), and an unchanged listing with a current grade
@@ -25,12 +24,12 @@ from app.logging_setup import log
 from app.services import listing_grading as grading
 from app.repositories import raw_job_listing as raw_repo
 from app.services import listing_processing as processing
-from app.workflows.enrichment import LLM_QUEUE, STAGE_EVENT, cool_down_gpu, llm_available
+from app.workflows.llm_queue import LLM_QUEUE, STAGE_EVENT, cool_down_gpu, llm_available
 from app.workflows.listing_processing import load_listing_step, parse_step
 
 
-# Batches of listings run on their own queue, two at a time like the company
-# batch: while one waits for the GPU the next is being read. The grading itself
+# Batches of listings run on their own queue, two at a time: while one waits
+# for the GPU the next is being read. The grading itself
 # still goes through the single-slot `llm` queue.
 LISTING_QUEUE = "listing-grade"
 LISTING_CONCURRENCY = 2
@@ -41,7 +40,7 @@ _queue_registered = False
 
 def register_queue() -> None:
     """Register the batch queue. Call AFTER `DBOS.launch()` (see
-    `enrichment.register_queues` for why), right after it. Idempotent."""
+    `llm_queue.register_queues` for why), right after it. Idempotent."""
     global _queue_registered
     if _queue_registered:
         return

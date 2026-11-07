@@ -1,29 +1,5 @@
-"""DBOS workflows. Importing this module registers them with DBOS."""
+"""DBOS workflows. Importing a module registers its workflows with DBOS."""
 
-from app.workflows.enrichment import (
-    APPLICATION_VERSION,
-    COMPANY_QUEUE,
-    INGEST_QUEUE,
-    LLM_QUEUE,
-    enrich_job_workflow,
-    enrich_pending_workflow,
-    ingest_page_workflow,
-    register_queues,
-    scrape_and_enrich_workflow,
-    scrape_company_workflow,
-    scrape_companies_workflow,
-)
+from app.workflows.llm_queue import APPLICATION_VERSION, LLM_QUEUE, register_queues
 
-__all__ = [
-    "APPLICATION_VERSION",
-    "COMPANY_QUEUE",
-    "INGEST_QUEUE",
-    "LLM_QUEUE",
-    "enrich_job_workflow",
-    "enrich_pending_workflow",
-    "ingest_page_workflow",
-    "register_queues",
-    "scrape_and_enrich_workflow",
-    "scrape_company_workflow",
-    "scrape_companies_workflow",
-]
+__all__ = ["APPLICATION_VERSION", "LLM_QUEUE", "register_queues"]

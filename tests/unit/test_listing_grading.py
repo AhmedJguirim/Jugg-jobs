@@ -1,5 +1,5 @@
-"""Grade-then-create for parsed listings, and the guards that keep the Dutch
-pipeline away from them (ADR-0015)."""
+"""Grade-then-create for parsed listings (ADR-0015): nothing reaches `jobs`
+until it has a grade."""
 
 from __future__ import annotations
 
@@ -12,7 +12,8 @@ from app.db.models.enrichment import JobAssessment, JobTranslation
 from app.db.models.job import Job
 from app.llm import global_grader
 from app.llm.profile import CandidateProfile
-from app.llm.service import AssessmentUnparseable, LlmResult
+from app.integrations.ollama import LlmResult
+from app.llm.scoring import AssessmentUnparseable
 from app.parsers import ParsedListing, parse_listing
 from app.repositories import enrichment as enrichment_repo
 from app.repositories import job as job_repo
@@ -147,60 +148,6 @@ class TestPersist:
         assert session.get(Job, job_id).applied_at is not None
 
 
-class TestTheDutchPipelineLeavesOtherSourcesAlone:
-    def make_jobs(self, session) -> tuple[Job, Job]:
-        nvb, _ = job_repo.upsert(session, JobCreate(source="nvb", external_id="guard-nvb", title="Dev", description="<p>PHP</p>"))
-        other, _ = job_repo.upsert(session, JobCreate(source="ashbyhq", external_id="guard-ashby", title="Dev", description="<p>PHP</p>"))
-        return nvb, other
-
-    def test_pending_queries_only_return_nvb_vacancies(self, session):
-        nvb, other = self.make_jobs(session)
-
-        translating = {j.id for j in enrichment_repo.pending_translation(session, prompt_version="x", limit=100_000)}
-        assessing = {j.id for j in enrichment_repo.pending_assessment(session, profile_name="t", prompt_version="x", limit=100_000)}
-
-        assert nvb.id in translating and nvb.id in assessing
-        assert other.id not in translating and other.id not in assessing
-
-    def test_a_graded_job_is_not_picked_up_after_its_grade_is_stored(self, session, job_payload, monkeypatch):
-        stub_model(monkeypatch, REPLY)
-        prepared = grading.prepare(job_payload, "t", session)
-        job_id = grading.persist(session, job_payload, prepared, grading.grade(prepared))["job_id"]
-
-        pending = {j.id for j in enrichment_repo.pending_assessment(session, profile_name="t", prompt_version="assess-v4", limit=100_000)}
-
-        assert job_id not in pending
-
-    def test_enrich_job_workflow_skips_other_sources(self, monkeypatch):
-        from app.workflows import enrichment as flow
-
-        calls = []
-        monkeypatch.setattr(flow, "prepare_text", lambda *a, **k: {
-            "found": True, "source": "ashbyhq", "text": "x", "needs_translation": True, "needs_assessment": True})
-        monkeypatch.setattr(flow, "cool_down_gpu", lambda: calls.append("cool"))
-        monkeypatch.setattr(flow, "translate_step", lambda *a, **k: calls.append("translate"))
-
-        result = flow.enrich_job_workflow.__wrapped__(1, "en", "t", False)
-
-        assert result["status"] == "not_nvb" and calls == []
-
-    def test_nvb_vacancies_still_take_the_old_path(self, monkeypatch):
-        from app.workflows import enrichment as flow
-
-        monkeypatch.setattr(flow, "prepare_text", lambda *a, **k: {
-            "found": True, "source": "nvb", "text": "", "needs_translation": False, "needs_assessment": False})
-
-        assert flow.enrich_job_workflow.__wrapped__(1, "en", "t", False)["status"] == "no_description"
-
-    def test_a_replayed_prepare_result_without_a_source_key_is_treated_as_nvb(self, monkeypatch):
-        from app.workflows import enrichment as flow
-
-        monkeypatch.setattr(flow, "prepare_text", lambda *a, **k: {
-            "found": True, "text": "", "needs_translation": False, "needs_assessment": False})
-
-        assert flow.enrich_job_workflow.__wrapped__(1, "en", "t", False)["status"] == "no_description"
-
-
 class TestGreenhouseListings:
     URL = "https://job-boards.greenhouse.io/2k/jobs/8035080003"
 
@@ -227,17 +174,6 @@ class TestGreenhouseListings:
         assert (job.salary_min, job.salary_max, job.salary_type) == (169100, 250280, "yearly")
         assert enrichment_repo.get_assessment(session, job.id, "t").prompt_version == "assess-global-v1"
 
-    def test_the_dutch_pipeline_leaves_it_alone(self, session, gh_payload, monkeypatch):
-        stub_model(monkeypatch, '{"fit_score": 80, "verdict": "possible"}')
-        prepared = grading.prepare(gh_payload, "t", session)
-        job_id = grading.persist(session, gh_payload, prepared, grading.grade(prepared))["job_id"]
-
-        pending = {j.id for j in enrichment_repo.pending_assessment(
-            session, profile_name="t", prompt_version="assess-v4", limit=100_000)}
-
-        assert job_id not in pending
-
-
 class TestLeverListings:
     URL = "https://jobs.lever.co/jobgether/29ff8655-9468-4c31-8804-93b79abeb2a8"
 
@@ -260,17 +196,6 @@ class TestLeverListings:
         job = session.get(Job, result["job_id"])
         assert (job.source, job.company.name, job.salary_min) == ("lever", "Jobgether", 100000)
         assert enrichment_repo.get_assessment(session, job.id, "t").prompt_version == "assess-global-v1"
-
-    def test_the_dutch_pipeline_leaves_it_alone(self, session, lv_payload, monkeypatch):
-        stub_model(monkeypatch, '{"fit_score": 70, "verdict": "possible"}')
-        prepared = grading.prepare(lv_payload, "t", session)
-        job_id = grading.persist(session, lv_payload, prepared, grading.grade(prepared))["job_id"]
-
-        pending = {j.id for j in enrichment_repo.pending_assessment(
-            session, profile_name="t", prompt_version="assess-v4", limit=100_000)}
-
-        assert job_id not in pending
-
 
 class TestWorkableListings:
     URL = "https://apply.workable.com/dacodes-mx/j/5E3ED2DFA7"
@@ -296,16 +221,6 @@ class TestWorkableListings:
 
         job = session.get(Job, result["job_id"])
         assert (job.source, job.external_id, job.company.name) == ("workable", "5E3ED2DFA7", "DaCodes")
-
-    def test_the_dutch_pipeline_leaves_it_alone(self, session, wk_payload, monkeypatch):
-        stub_model(monkeypatch, '{"fit_score": 60, "verdict": "possible"}')
-        prepared = grading.prepare(wk_payload, "t", session)
-        job_id = grading.persist(session, wk_payload, prepared, grading.grade(prepared))["job_id"]
-
-        pending = {j.id for j in enrichment_repo.pending_assessment(
-            session, profile_name="t", prompt_version="assess-v4", limit=100_000)}
-
-        assert job_id not in pending
 
     def test_the_careers_page_saved_under_a_job_url_is_reported_not_found(self):
         from app.services import listing_processing
@@ -339,16 +254,6 @@ class TestBreezyListings:
         job = session.get(Job, result["job_id"])
         assert (job.source, job.external_id, job.company.name) == ("breezy", "4ba5bc0d9700", "Localize")
         assert job.raw["title_source"] == "text"
-
-    def test_the_dutch_pipeline_leaves_it_alone(self, session, bz_payload, monkeypatch):
-        stub_model(monkeypatch, '{"fit_score": 65, "verdict": "possible"}')
-        prepared = grading.prepare(bz_payload, "t", session)
-        job_id = grading.persist(session, bz_payload, prepared, grading.grade(prepared))["job_id"]
-
-        pending = {j.id for j in enrichment_repo.pending_assessment(
-            session, profile_name="t", prompt_version="assess-v4", limit=100_000)}
-
-        assert job_id not in pending
 
     def test_a_page_with_no_description_is_unreadable_not_unsupported(self):
         from app.services import listing_processing

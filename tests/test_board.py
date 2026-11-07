@@ -1,8 +1,8 @@
 """End-to-end tests for the job board view.
 
 These drive the real page against the real database, so they check the thing the
-user actually looks at: that enriched vacancies render, that the filters do what
-they claim, and that the detail drawer shows the English translation.
+user actually looks at: that graded postings render, that the filters do what
+they claim, and that the detail drawer shows the grade and the description.
 
 Marked `e2e`; deselect with -m "not e2e".
 """
@@ -45,7 +45,7 @@ class TestApi:
     def test_stats_carry_the_headline_numbers(self, app_server: str, page: Page):
         stats = page.request.get(f"{app_server}/api/board").json()["stats"]
 
-        for key in ("total_jobs", "actionable", "blocked", "needs_dutch", "gpu_seconds_spent"):
+        for key in ("total_jobs", "actionable", "blocked", "gpu_seconds_spent"):
             assert key in stats
 
     def test_list_rows_omit_the_long_text(self, app_server: str, page: Page):
@@ -145,27 +145,20 @@ class TestDetailDrawer:
     def test_clicking_a_vacancy_opens_the_drawer(self, board: Page):
         board.locator("ul > li").first.click()
 
-        expect(board.get_by_role("button", name="Show Dutch original")).to_be_visible()
+        expect(board.get_by_role("link", name="Open posting")).to_be_visible()
 
-    def test_drawer_shows_the_english_description(self, board: Page):
+    def test_drawer_shows_the_description(self, board: Page):
         board.locator("ul > li").first.click()
 
-        expect(board.locator("text=Description (English)")).to_be_visible()
-
-    def test_can_switch_to_the_dutch_original(self, board: Page):
-        board.locator("ul > li").first.click()
-
-        board.get_by_role("button", name="Show Dutch original").click()
-
-        expect(board.locator("text=as the model read it")).to_be_visible()
+        expect(board.locator("text=Description, as the model read it")).to_be_visible()
 
     def test_escape_closes_the_drawer(self, board: Page):
         board.locator("ul > li").first.click()
-        expect(board.get_by_role("button", name="Show Dutch original")).to_be_visible()
+        expect(board.locator("text=Description, as the model read it")).to_be_visible()
 
         board.keyboard.press("Escape")
 
-        expect(board.get_by_role("button", name="Show Dutch original")).not_to_be_visible()
+        expect(board.locator("text=Description, as the model read it")).not_to_be_visible()
 
     def test_drawer_reports_provenance(self, board: Page):
         """Which model produced this, and what it cost, stays visible."""
@@ -241,7 +234,7 @@ class TestMarks:
         card.get_by_role("button", name="Mark applied").click()
 
         expect(card.get_by_role("button", name="Applied ✓")).to_be_visible()
-        expect(board.get_by_role("button", name="Show Dutch original")).not_to_be_visible()
+        expect(board.locator("text=Description, as the model read it")).not_to_be_visible()
 
 
 class TestPagination:
@@ -291,42 +284,6 @@ class TestPagination:
         board.get_by_role("button", name="First page").click()
         expect(last).to_have_value("1")
         expect(board.get_by_role("button", name="Previous")).to_be_disabled()
-
-
-class TestLanguageFilter:
-    def open_matches(self, app_server: str, board: Page, language: str) -> int:
-        jobs = board.request.get(f"{app_server}/api/board").json()["jobs"]
-        return sum(
-            1 for job in jobs
-            if (job["source_language"] or "unknown") == language
-            and not job["applied_at"] and not job["archived_at"]
-        )
-
-    def test_the_options_are_the_languages_that_occur(self, app_server: str, board: Page):
-        labels = board.get_by_label("Language").locator("option").all_inner_texts()
-
-        assert labels[0] == "Any language"
-        assert any(label.startswith("English (") for label in labels)
-        assert any(label.startswith("Dutch (") for label in labels)
-
-    @pytest.mark.parametrize("language, label", [("en", "English"), ("nl", "Dutch")])
-    def test_choosing_a_language_keeps_only_those_vacancies(self, app_server: str, board: Page, language, label):
-        expected = self.open_matches(app_server, board, language)
-        assert expected > 0, f"no open {label} vacancy to filter to"
-
-        board.get_by_label("Language").select_option(language)
-
-        expect(board.locator(RESULT_COUNT).first).to_have_text(str(expected))
-
-    def test_reset_clears_it(self, app_server: str, board: Page):
-        before = matches(board)
-        board.get_by_label("Language").select_option("nl")
-        expect(board.locator(RESULT_COUNT).first).not_to_have_text(str(before))
-
-        board.get_by_role("button", name="Reset filters").click()
-
-        expect(board.locator(RESULT_COUNT).first).to_have_text(str(before))
-        expect(board.get_by_label("Language")).to_have_value("")
 
 
 def test_detail_keeps_the_grade_the_card_showed(app_server: str, page: Page):

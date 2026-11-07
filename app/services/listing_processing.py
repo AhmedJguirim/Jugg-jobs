@@ -1,14 +1,14 @@
-"""Process one raw job listing: detect its platform, parse it, store the job.
+"""Read one raw job listing: detect its platform and parse it into a job.
 
-The three stages are separate functions with plain-dict results so the DBOS
-workflow (`app/workflows/listing_processing.py`) can checkpoint each one, and so
+The two stages are separate functions with plain-dict results so the DBOS
+workflow (`app/workflows/listing_grading.py`) can checkpoint each one, and so
 tests can call them without DBOS.
 
-    load_listing -> parse -> store
+    load_listing -> parse
 
-Outcomes (`status` in the final result):
+Outcomes (`status` in the result):
 
-- `stored`            the job was parsed and written to `jobs_test`
+- `stored`            the page parsed into a job (`job`, ready to be graded)
 - `not_found`         the platform says the posting no longer exists; nothing stored
 - `unsupported`       the URL belongs to no platform we have a parser for
 - `unparseable`       right platform, but the HTML is not a job page we can read
@@ -21,9 +21,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.parsers import ListingNotFound, ListingParseError, detect_platform, parse_listing
-from app.repositories import job_test as job_test_repo
 from app.repositories import raw_job_listing as raw_repo
-from app.schemas.job import JobCreate
 
 STORED = "stored"
 NOT_FOUND = "not_found"
@@ -68,24 +66,3 @@ def parse(listing: dict[str, Any]) -> dict[str, Any]:
     # Where the job came from, so a stored row can be traced to its raw page.
     job.raw = {**(job.raw or {}), "raw_listing_id": listing["id"]}
     return {**base, "status": STORED, "platform": platform, "job": job.model_dump(mode="json")}
-
-
-def store(session: Session, parsed: dict[str, Any]) -> dict[str, Any]:
-    """Write a parsed job to `jobs_test`; pass any other outcome through."""
-    if parsed["status"] != STORED:
-        return parsed
-    job, created = job_test_repo.upsert(session, JobCreate.model_validate(parsed["job"]))
-    return {
-        "raw_listing_id": parsed["raw_listing_id"],
-        "url": parsed["url"],
-        "status": STORED,
-        "platform": parsed["platform"],
-        "job_test_id": job.id,
-        "created": created,
-        "title": job.title,
-    }
-
-
-def process(session: Session, raw_listing_id: int) -> dict[str, Any]:
-    """All three stages in one go (no DBOS), for tests and one-off use."""
-    return store(session, parse(load_listing(session, raw_listing_id)))

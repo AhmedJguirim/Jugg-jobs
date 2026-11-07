@@ -21,7 +21,7 @@ from app.config import get_settings
 from app.llm.global_grader import assess_listing
 from app.llm.global_prompts import GLOBAL_ASSESSMENT_PROMPT_VERSION
 from app.llm.profile import load_profile
-from app.llm.service import AssessmentUnparseable
+from app.llm.scoring import AssessmentUnparseable
 from app.logging_setup import log
 from app.repositories import enrichment as enrichment_repo
 from app.repositories import job as job_repo

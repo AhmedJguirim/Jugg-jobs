@@ -1,32 +1,24 @@
-"""Fetching posting pages into `job_listings_test`: the cut-down, the outcomes,
-the pacing, and the queue of links. No test makes a real request."""
+"""Fetching posting pages: the cut-down to what a hand copy would be, the
+outcomes, and the pacing. No test makes a real request."""
 
 from __future__ import annotations
 
 import pathlib
-from contextlib import contextmanager
-from datetime import datetime, timezone
 
 import httpx
 import pytest
-from sqlalchemy import select
 
-from app.db.models.job_listing_test import JobListingTest
-from app.db.models.manual_job_listing_url import ManualJobListingUrl
-from app.db.models.raw_job_listing import RawJobListing
 from app.integrations.listing_pages import extract
 from app.integrations.listing_pages.client import Page
 from app.parsers import ListingNotFound, ParsedListing
 from app.parsers.ashbyhq import parse as parse_ashby
 from app.parsers.lever import parse
-from app.repositories import job_listing_test as repo
 from app.services import listing_fetch
 
 FIXTURES = pathlib.Path(__file__).resolve().parent.parent / "fixtures" / "lever"
 ASHBY_FIXTURES = pathlib.Path(__file__).resolve().parent.parent / "fixtures" / "ashbyhq"
 ASHBY_URL = "https://jobs.ashbyhq.com/cyberhaven/020d895a-a68e-400d-8b19-71634a331915"
 URL = "https://jobs.lever.co/jobgether/29ff8655-9468-4c31-8804-93b79abeb2a8"
-OTHER = "https://jobs.lever.co/jobgether/5e8a2b39-fa91-4a63-895e-31411cc57f6f"
 
 
 def asked_for(platform: str, url: str) -> list[str]:
@@ -97,7 +89,7 @@ class TestFetchListing:
     def test_a_posting_is_stored_as_its_block(self):
         outcome = listing_fetch.fetch_listing(URL, fetch=served())
 
-        assert outcome["status"] == repo.FETCHED and outcome["http_status"] == 200
+        assert outcome["status"] == listing_fetch.FETCHED and outcome["http_status"] == 200
         assert outcome["html_body"].startswith('<div class="content">')
         assert outcome["page_bytes"] > len(outcome["html_body"])
 
@@ -117,19 +109,19 @@ class TestFetchListing:
 
         outcome = listing_fetch.fetch_listing(URL, fetch=served(404, page))
 
-        assert outcome["status"] == repo.NOT_FOUND and len(outcome["html_body"]) < 200
+        assert outcome["status"] == listing_fetch.NOT_FOUND and len(outcome["html_body"]) < 200
         assert isinstance(parse(URL, outcome["html_body"]), ListingNotFound)
 
     @pytest.mark.parametrize("code", [403, 429, 503])
     def test_a_refusal_is_blocked_and_stores_nothing(self, code):
         outcome = listing_fetch.fetch_listing(URL, fetch=served(code, "denied"))
 
-        assert (outcome["status"], outcome["html_body"], outcome["note"]) == (repo.BLOCKED, "", f"HTTP {code}")
+        assert (outcome["status"], outcome["html_body"], outcome["note"]) == (listing_fetch.BLOCKED, "", f"HTTP {code}")
 
     def test_a_page_without_the_block_is_no_content(self):
         outcome = listing_fetch.fetch_listing(URL, fetch=served(200, "<html><body>hi</body></html>"))
 
-        assert outcome["status"] == repo.NO_CONTENT and outcome["html_body"] == ""
+        assert outcome["status"] == listing_fetch.NO_CONTENT and outcome["html_body"] == ""
 
     def test_a_network_failure_is_an_outcome_not_a_crash(self):
         def fetch(url, **kw):
@@ -137,7 +129,7 @@ class TestFetchListing:
 
         outcome = listing_fetch.fetch_listing(URL, fetch=fetch)
 
-        assert outcome["status"] == repo.ERROR and "ConnectTimeout" in outcome["note"]
+        assert outcome["status"] == listing_fetch.ERROR and "ConnectTimeout" in outcome["note"]
 
     def test_a_site_without_a_fetcher_makes_no_request(self):
         def fetch(url, **kw):
@@ -145,100 +137,10 @@ class TestFetchListing:
 
         for url in ("https://www.linkedin.com/jobs/view/1", "https://example.com/job/1"):
             outcome = listing_fetch.fetch_listing(url, fetch=fetch)
-            assert outcome["status"] == repo.UNSUPPORTED and outcome["requested"] is False
+            assert outcome["status"] == listing_fetch.UNSUPPORTED and outcome["requested"] is False
 
 
-@pytest.fixture
-def links(session):
-    """Two live Lever links, a removed one, one already pasted by hand, one Ashby."""
-    session.add_all(
-        [
-            ManualJobListingUrl(url=URL),
-            ManualJobListingUrl(url=OTHER),
-            ManualJobListingUrl(url="https://jobs.lever.co/x/removed", removed_at=datetime.now(timezone.utc)),
-            ManualJobListingUrl(url="https://jobs.lever.co/x/by-hand"),
-            ManualJobListingUrl(url="https://www.linkedin.com/jobs/view/1"),
-            RawJobListing(url="https://jobs.lever.co/x/by-hand", html_body="<div/>"),
-        ]
-    )
-    session.flush()
-    return session
-
-
-class TestPending:
-    def test_removed_hand_pasted_and_fetched_links_are_left_out(self, links):
-        repo.upsert(links, URL, status=repo.FETCHED, html_body="<div/>")
-
-        pending = repo.pending_urls(links, 10)
-
-        assert pending == [OTHER, "https://www.linkedin.com/jobs/view/1"]
-
-    def test_include_pasted_adds_the_links_already_stored_by_hand(self, links):
-        assert "https://jobs.lever.co/x/by-hand" not in repo.pending_urls(links, 10)
-        assert "https://jobs.lever.co/x/by-hand" in repo.pending_urls(links, 10, include_pasted=True)
-
-    def test_hosts_keep_only_that_platforms_links(self, links):
-        assert repo.pending_urls(links, 10, hosts=["jobs.lever.co"]) == [URL, OTHER]
-        assert repo.pending_urls(links, 10, hosts=["linkedin.com"]) == ["https://www.linkedin.com/jobs/view/1"]
-
-    def test_retry_brings_back_only_outcomes_that_may_change(self, links):
-        repo.upsert(links, URL, status=repo.BLOCKED)
-        repo.upsert(links, OTHER, status=repo.NOT_FOUND)
-
-        assert URL in repo.pending_urls(links, 10, retry=True)
-        assert OTHER not in repo.pending_urls(links, 10, retry=True)
-        assert URL not in repo.pending_urls(links, 10)
-
-    def test_the_limit_is_respected_oldest_first(self, links):
-        assert repo.pending_urls(links, 1) == [URL]
-
-    def test_upsert_replaces_the_earlier_outcome(self, links):
-        repo.upsert(links, URL, status=repo.BLOCKED, http_status=403)
-        repo.upsert(links, URL, status=repo.FETCHED, html_body="<div>x</div>", http_status=200)
-
-        rows = links.scalars(select(JobListingTest).where(JobListingTest.url == URL)).all()
-        assert len(rows) == 1 and (rows[0].status, rows[0].html_body) == (repo.FETCHED, "<div>x</div>")
-
-
-class TestFetchPending:
-    def run(self, links, **kwargs):
-        sleeps: list[float] = []
-
-        @contextmanager
-        def open_session():
-            yield links
-
-        results = listing_fetch.fetch_pending(
-            10,
-            fetch=kwargs.pop("fetch", served()),
-            sleep=sleeps.append,
-            delay=lambda: 2.0,
-            open_session=open_session,
-            **kwargs,
-        )
-        return results, sleeps
-
-    def test_each_outcome_is_stored(self, links):
-        results, _ = self.run(links)
-
-        assert [r["status"] for r in results] == [repo.FETCHED, repo.FETCHED, repo.UNSUPPORTED]
-        stored = {row.url: row.status for row in links.scalars(select(JobListingTest))}
-        assert stored == {URL: "fetched", OTHER: "fetched", "https://www.linkedin.com/jobs/view/1": "unsupported"}
-
-    def test_requests_are_spaced_and_never_before_the_first(self, links):
-        _, sleeps = self.run(links)
-
-        # Two real requests -> one pause between them. The unsupported link
-        # makes no request, so it neither waits nor makes the next one wait.
-        assert sleeps == [2.0]
-
-    def test_a_second_run_has_nothing_left(self, links):
-        self.run(links)
-
-        results, sleeps = self.run(links)
-
-        assert results == [] and sleeps == []
-
+class TestPacing:
     def test_the_default_pause_is_random_between_one_and_three_seconds(self):
         draws = [listing_fetch.random_delay() for _ in range(200)]
 
@@ -317,11 +219,11 @@ class TestAshby:
 
         outcome = listing_fetch.fetch_listing(ASHBY_URL, fetch=served(404, shell))
 
-        assert outcome["status"] == repo.NOT_FOUND
+        assert outcome["status"] == listing_fetch.NOT_FOUND
         assert isinstance(parse_ashby(ASHBY_URL, outcome["html_body"]), ListingNotFound)
 
     def test_a_fetched_posting_is_stored_and_parses(self):
         outcome = listing_fetch.fetch_listing(ASHBY_URL, fetch=served(200, ashby_response()))
 
-        assert outcome["status"] == repo.FETCHED
+        assert outcome["status"] == listing_fetch.FETCHED
         assert isinstance(parse_ashby(ASHBY_URL, outcome["html_body"]), ParsedListing)

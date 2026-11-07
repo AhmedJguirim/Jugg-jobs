@@ -9,7 +9,6 @@ from app.integrations.listing_pages import extract
 from app.integrations.listing_pages.client import Page
 from app.parsers import ListingNotFound, ParsedListing
 from app.parsers.breezy import parse
-from app.repositories import job_listing_test as repo
 from app.services import listing_fetch
 from app.text.dom import parse_html
 from tests.unit.test_listing_fetch import asked_for, cut, served
@@ -66,7 +65,7 @@ def test_a_removed_position_redirects_to_the_company_page_and_is_read_as_gone():
 
     outcome = listing_fetch.fetch_listing(URL, fetch=fetch)
 
-    assert outcome["status"] == repo.NOT_FOUND
+    assert outcome["status"] == listing_fetch.NOT_FOUND
     assert isinstance(parse(URL, outcome["html_body"]), ListingNotFound)
 
 
@@ -78,24 +77,24 @@ def test_a_closed_position_that_stays_on_its_link_is_read_as_gone():
 
     outcome = listing_fetch.fetch_listing(URL, fetch=served(200, closed))
 
-    assert outcome["status"] == repo.NOT_FOUND
+    assert outcome["status"] == listing_fetch.NOT_FOUND
     assert isinstance(parse(URL, outcome["html_body"]), ListingNotFound)
 
 
 def test_a_live_position_whose_text_says_closed_is_still_a_job():
     page = response().replace("Aimpoint Digital is", "Position Closed is", 1)
 
-    assert listing_fetch.fetch_listing(URL, fetch=served(200, page))["status"] == repo.FETCHED
+    assert listing_fetch.fetch_listing(URL, fetch=served(200, page))["status"] == listing_fetch.FETCHED
 
 
 def test_a_page_that_stays_on_the_position_but_has_no_description_is_no_content():
     outcome = listing_fetch.fetch_listing(URL, fetch=served(200, "<html><body>hi</body></html>"))
 
-    assert outcome["status"] == repo.NO_CONTENT
+    assert outcome["status"] == listing_fetch.NO_CONTENT
 
 
 def test_a_fetched_position_is_stored():
     outcome = listing_fetch.fetch_listing(URL, fetch=served(200, response()))
 
-    assert outcome["status"] == repo.FETCHED
+    assert outcome["status"] == listing_fetch.FETCHED
     assert outcome["html_body"].startswith('<div class="description">')

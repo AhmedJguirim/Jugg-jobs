@@ -1,4 +1,4 @@
-"""End-to-end checks for the section switch and the workspace page.
+"""End-to-end checks for the navigation and the workspace pages.
 
 Nothing is submitted here: the form writes to the application database, and the
 write path is covered against the rollback-isolated test database in
@@ -42,53 +42,25 @@ def test_existing_listings_prefills_the_link(app_server: str, page: Page):
         expect(page.get_by_label("Link")).to_have_value(next_url)
 
 
-def test_switch_moves_between_sections(app_server: str, page: Page):
-    page.goto(f"{app_server}/board")
-    switch = page.get_by_role("switch")
-    expect(switch).to_have_attribute("aria-checked", "false")
-
-    switch.click()
-    page.wait_for_url("**/workspace")
-    expect(page.get_by_role("switch")).to_have_attribute("aria-checked", "true")
-
-    page.get_by_role("switch").click()
-    page.wait_for_url("**/board")
+def test_the_navigation_marks_the_current_page(app_server: str, page: Page):
+    for path, name in (("/workspace/urls", "Listing URLs"), ("/workspace", "Raw listings"), ("/board", "Job board")):
+        page.goto(f"{app_server}{path}")
+        nav = page.get_by_role("navigation", name="Main navigation")
+        expect(nav.get_by_role("link", name=name)).to_have_attribute("aria-current", "page")
+        expect(nav.get_by_role("link")).to_have_count(3)
 
 
-def test_each_section_has_its_own_navigation(app_server: str, page: Page):
-    page.goto(f"{app_server}/companies")
-    nav = page.get_by_role("navigation", name="Section navigation")
-    expect(nav.get_by_role("link", name="Employers")).to_have_attribute("aria-current", "page")
-    expect(nav.get_by_role("link", name="Raw listings")).to_have_count(0)
+def test_the_form_pages_belong_to_raw_listings(app_server: str, page: Page):
+    page.goto(f"{app_server}/workspace/raw/other")
+    nav = page.get_by_role("navigation", name="Main navigation")
 
-    page.goto(f"{app_server}/workspace")
-    nav = page.get_by_role("navigation", name="Section navigation")
     expect(nav.get_by_role("link", name="Raw listings")).to_have_attribute("aria-current", "page")
-    expect(nav.get_by_role("link", name="Employers")).to_have_count(0)
 
 
-def test_jobs_test_lists_rows_and_opens_a_drawer(app_server: str, page: Page):
-    items = page.request.get(f"{app_server}/api/jobs-test").json()["items"]
-    if not items:
-        pytest.skip("jobs_test is empty")
-    first = items[0]
+def test_the_root_opens_the_board(app_server: str, page: Page):
+    page.goto(f"{app_server}/")
 
-    page.goto(f"{app_server}/jobs-test")
-    page.locator(f"li[data-job-id='{first['id']}']").click()
-
-    drawer = page.get_by_label("Job details")
-    expect(drawer.get_by_role("heading", name=first["title"])).to_be_visible()
-    expect(drawer.get_by_role("link", name="Open vacancy")).to_have_attribute("href", first["url"])
-    expect(drawer.get_by_role("heading", name="Description")).to_be_visible()
-    page.keyboard.press("Escape")
-    expect(drawer).to_be_hidden()
-
-
-def test_jobs_test_is_in_the_workspace_navigation(app_server: str, page: Page):
-    page.goto(f"{app_server}/jobs-test")
-    nav = page.get_by_role("navigation", name="Section navigation")
-
-    expect(nav.get_by_role("link", name="Jobs test")).to_have_attribute("aria-current", "page")
+    page.wait_for_url("**/board")
 
 
 def test_listing_urls_hides_processed_links(app_server: str, page: Page):

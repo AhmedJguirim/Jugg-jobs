@@ -6,7 +6,7 @@ result is the caller's job (`app/services/listing_processing.py`).
 
 A parser returns one of two things, or raises:
 
-- `ParsedListing` - the job, as the same `JobCreate` the NVB ingest produces.
+- `ParsedListing` - the job, as a `JobCreate` ready to be graded and stored.
 - `ListingNotFound` - the platform rendered its "this job does not exist" page.
   Common (postings are taken down), so it is a result, not an error, and it is
   checked before anything else is read from the page.
